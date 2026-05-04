@@ -1,0 +1,41 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Claude Code local (no compartir)
+.claude/settings.local.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Secrets / env
+.env
+.env.local
+.env.*.local
+.env.production
+
+# Node / Bun (para la ventana de build)
+node_modules/
+.next/
+.turbo/
+dist/
+build/
+out/
+*.log
+.bun/
+.pnpm-store/
+
+# Python (si se usan scripts de ingest)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Misc
+*.tmp
+.cache/
+coverage/
