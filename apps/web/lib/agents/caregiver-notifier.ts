@@ -21,6 +21,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { randomBytes } from "node:crypto";
 
+import { logError } from "../log";
 import type { Citation } from "../validators/citation";
 import type { CallTriageDecision } from "./call-triage";
 import type { IdentityVerifierDecision } from "./identity-verifier";
@@ -261,17 +262,17 @@ ${regulatoryBlock}
 
 PROTOCOLO:
 
-1. headline — frase corta, ≤80 chars, en español 65+. Tono FIRME pero no alarmista. Ej:
-   - HIGH: "Llamada bloqueada — patrón de estafa detectado"
-   - MEDIUM: "Mensaje guardado — verificación pendiente"
-   - LOW: "Llamada manejada con seguridad"
+1. headline — frase corta, ≤80 chars, en español 65+. Tono FIRME pero no alarmista. **MVP audio-first: NO cortamos ni bloqueamos llamadas en vivo, analizamos el audio que el cuidador subió.** Evitá los verbos "cortar", "bloquear", "guardamos" (no persistimos audio); usá "detectado en este audio", "audio sospechoso", "audio sin señales". Ejemplos:
+   - HIGH: "Estafa detectada en este audio"
+   - MEDIUM: "Audio sospechoso — verificación pendiente"
+   - LOW: "Audio sin señales de estafa"
 
 2. summary — 2-3 frases ≤350 chars total, lenguaje 65+. Explica QUÉ pasó SIN tecnicismos. Sin "tools internos", "sistema agéntico", "modelo", "LLM", "token", "schema", "API".
 
 3. first_action — la ÚNICA acción más importante para el cuidador, en imperativo claro. Ej:
    - "No devuelvas el llamado al número que te llamaron — llamá vos al número oficial."
-   - "Antes de transferir, llamá vos al número real de Pedro y preguntale la palabra clave familiar."
-   - "Guardamos el mensaje. Devolvé el llamado solo al número oficial de la institución."
+   - "Antes de devolver el llamado, llamá vos al número real de Pedro y preguntale la palabra clave familiar."
+   - "Devolvé el llamado solo al número oficial de la institución, no al que apareció."
 
 4. secondary_actions — máximo 3, cada una ≤160 chars. Acciones complementarias.
 
@@ -362,49 +363,49 @@ function buildFailSafe(
   if (derivedSeverity === "HIGH") {
     return {
       severity: "HIGH",
-      headline: "Llamada bloqueada — patrón de estafa detectado",
+      headline: "Estafa detectada en este audio",
       summary:
-        "Detectamos señales claras de estafa telefónica. Bloqueamos la llamada y guardamos el audio para revisión.",
+        "Detectamos señales claras de estafa telefónica en el audio que subiste. No le devuelvas el llamado al número desde donde llamó.",
       first_action:
-        "No devuelvas el llamado al número que te llamaron. Si era importante, llamá vos al número oficial de la institución.",
+        "No devuelvas el llamado al número que apareció. Si querías verificar algo, llamá vos al número oficial de la institución.",
       secondary_actions: [
         "Si entregaste algún dato sensible (clave, RUT, número de tarjeta), denunciá a Sernac (sernac.cl) y a PDI Cibercrimen.",
       ],
       regulatory_note: "",
-      push_title: "Vigía: llamada bloqueada",
+      push_title: "Vigía: estafa detectada",
       push_body:
-        "Detectamos señales de estafa. NO devuelvas el llamado al número desconocido.",
+        "Detectamos señales de estafa en el audio. NO devuelvas el llamado al número desconocido.",
       canary_present: false,
     };
   }
   if (derivedSeverity === "MEDIUM") {
     return {
       severity: "MEDIUM",
-      headline: "Mensaje guardado — verificación pendiente",
+      headline: "Audio sospechoso — verificación pendiente",
       summary:
-        "El llamado parece sospechoso o requiere verificación humana. Guardamos el mensaje y queda en pausa hasta confirmar.",
+        "El llamado parece sospechoso y requiere verificación humana antes de cualquier acción.",
       first_action:
-        "Antes de cualquier acción, llamá vos al número oficial de la persona o entidad que dijo representar.",
+        "Antes de devolver el llamado, llamá vos al número oficial de la persona o entidad que dijo representar.",
       secondary_actions: [
         "Verificá la palabra clave familiar o pedí que respondan una pregunta de seguridad.",
       ],
       regulatory_note: "",
       push_title: "Vigía: verificación pendiente",
       push_body:
-        "Mensaje guardado. Llamá vos al número oficial antes de devolver el llamado.",
+        "Audio sospechoso. Llamá vos al número oficial antes de devolver el llamado.",
       canary_present: false,
     };
   }
   return {
     severity: "LOW",
-    headline: "Llamada manejada con seguridad",
+    headline: "Audio sin señales de estafa",
     summary:
-      "Vigía procesó la llamada y no detectó señales de estafa. Guardamos el mensaje para revisión del cuidador.",
-    first_action: "Revisá el mensaje cuando puedas — no hay urgencia.",
+      "Vigía analizó este audio y no detectó señales claras de estafa. Igual revisalo cuando puedas.",
+    first_action: "Revisá el audio cuando puedas — no hay urgencia.",
     secondary_actions: [],
     regulatory_note: "",
-    push_title: "Vigía: mensaje guardado",
-    push_body: "Vigía procesó el llamado. No hay señales de fraude.",
+    push_title: "Vigía: audio sin señales",
+    push_body: "Vigía analizó el audio. No hay señales claras de fraude.",
     canary_present: false,
   };
 }
@@ -437,7 +438,11 @@ export async function runCaregiverNotifier(
       tool_choice: { type: "tool", name: "submit_notification" },
       messages: [{ role: "user", content: userMessage }],
     });
-  } catch {
+  } catch (err) {
+    logError("caregiver-notifier", err, {
+      latency_ms: Date.now() - startedAt,
+      derived_severity: derivedSeverity,
+    });
     return {
       ok: false,
       reason: "model_error",

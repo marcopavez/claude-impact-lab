@@ -16,6 +16,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { randomBytes } from "node:crypto";
 
+import { logError } from "../log";
 import type { CallTriageDecision } from "./call-triage";
 import type { IdentityVerifierDecision } from "./identity-verifier";
 
@@ -420,10 +421,15 @@ export async function runVishingAnalyst(
       thinking: { type: "enabled", budget_tokens: thinkingBudget },
       system: systemPrompt,
       tools: [submitAnalysisTool],
-      tool_choice: { type: "tool", name: "submit_analysis" },
+      // Extended thinking exige tool_choice="any" o "auto" (no "tool" forzado a un nombre).
+      // Como sólo definimos `submitAnalysisTool`, "any" es equivalente a forzar ese tool.
+      tool_choice: { type: "any" },
       messages: [{ role: "user", content: userMessage }],
     });
-  } catch {
+  } catch (err) {
+    logError("vishing-analyst", err, {
+      latency_ms: Date.now() - startedAt,
+    });
     return {
       ok: false,
       reason: "model_error",

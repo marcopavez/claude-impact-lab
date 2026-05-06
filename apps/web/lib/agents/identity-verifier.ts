@@ -18,6 +18,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { randomBytes } from "node:crypto";
 
+import { logError } from "../log";
 import type { WhitelistEntry, WhitelistPolicy } from "./call-triage";
 
 // ============================================================
@@ -434,7 +435,10 @@ export async function runIdentityVerifier(
       tool_choice: { type: "tool", name: "decide_verification_outcome" },
       messages: [{ role: "user", content: userMessage }],
     });
-  } catch {
+  } catch (err) {
+    logError("identity-verifier", err, {
+      latency_ms: Date.now() - startedAt,
+    });
     return {
       ok: false,
       reason: "model_error",

@@ -17,6 +17,7 @@ import { runRegulatoryTranslator } from "@/lib/agents/regulatory-translator";
 import { runVishingAnalyst } from "@/lib/agents/vishing-analyst";
 import { transcribeAudio } from "@/lib/clients/elevenlabs";
 import { httpSourceFetcher } from "@/lib/clients/source-fetcher";
+import { logError } from "@/lib/log";
 import { redact } from "@/lib/validators/pii";
 import {
   AUDIO_PROCESS_LIMITS,
@@ -73,6 +74,7 @@ function summarizePii(hits: ReturnType<typeof redact>["hits"]): PiiRedactionSumm
 
 export async function POST(request: Request): Promise<Response> {
   const totalStartedAt = Date.now();
+  const audioId = randomUUID();
 
   // ----- 1. Parse multipart -----
   let formData: FormData;
@@ -151,6 +153,7 @@ export async function POST(request: Request): Promise<Response> {
     const buf = Buffer.from(await file.arrayBuffer());
     blob = new Blob([new Uint8Array(buf)], { type: file.type });
   } catch (err) {
+    logError("audio-process.read-file", err, { audio_id: audioId });
     return jsonError(
       "INTERNAL_ERROR",
       err instanceof Error ? err.message : "No se pudo leer el archivo.",
@@ -164,6 +167,10 @@ export async function POST(request: Request): Promise<Response> {
     const stt = await transcribeAudio(blob, { languageCode: "es" });
     transcriptRaw = stt.text;
   } catch (err) {
+    logError("audio-process.stt", err, {
+      audio_id: audioId,
+      latency_ms: Date.now() - sttStartedAt,
+    });
     return jsonError(
       "STT_FAILED",
       err instanceof Error
@@ -216,6 +223,10 @@ export async function POST(request: Request): Promise<Response> {
       caller_transcript: piiResult.redacted,
     });
   } catch (err) {
+    logError("audio-process.triage-throw", err, {
+      audio_id: audioId,
+      latency_ms: Date.now() - triageStartedAt,
+    });
     return jsonError(
       "TRIAGE_FAILED",
       err instanceof Error
@@ -271,7 +282,11 @@ export async function POST(request: Request): Promise<Response> {
           kba_questions: demoConfig.kba_questions,
         },
       });
-    } catch {
+    } catch (err) {
+      logError("audio-process.identity-throw", err, {
+        audio_id: audioId,
+        latency_ms: Date.now() - idStart,
+      });
       idResult = {
         ok: false,
         reason: "model_error",
@@ -327,7 +342,11 @@ export async function POST(request: Request): Promise<Response> {
         triage_decision: triageDecision,
         identity_decision: identityDecision,
       });
-    } catch {
+    } catch (err) {
+      logError("audio-process.vishing-throw", err, {
+        audio_id: audioId,
+        latency_ms: Date.now() - vStart,
+      });
       vResult = {
         ok: false,
         reason: "model_error",
@@ -384,7 +403,11 @@ export async function POST(request: Request): Promise<Response> {
         },
         { fetchSource: httpSourceFetcher },
       );
-    } catch {
+    } catch (err) {
+      logError("audio-process.regulatory-throw", err, {
+        audio_id: audioId,
+        latency_ms: Date.now() - rStart,
+      });
       rResult = {
         ok: false,
         reason: "model_error",
@@ -424,20 +447,24 @@ export async function POST(request: Request): Promise<Response> {
         vishing_decision: vishingDecision,
         regulatory_decision: regulatoryDecision,
       });
-    } catch {
+    } catch (err) {
+      logError("audio-process.notifier-throw", err, {
+        audio_id: audioId,
+        latency_ms: Date.now() - nStart,
+      });
       nResult = {
         ok: false,
         reason: "model_error",
         fallback_decision: {
           severity: "MEDIUM",
-          headline: "Mensaje guardado — verificación pendiente",
+          headline: "Audio sospechoso — verificación pendiente",
           summary:
-            "El análisis se completó parcialmente. Por seguridad tratamos la llamada como sospechosa.",
+            "El análisis se completó parcialmente. Por seguridad tratamos este audio como sospechoso.",
           first_action:
-            "No devuelvas el llamado al número desconocido. Si era importante, llamá vos al número oficial.",
+            "No devuelvas el llamado al número que apareció. Si era importante, llamá vos al número oficial.",
           secondary_actions: [],
           regulatory_note: "",
-          push_title: "Vigía: revisá el mensaje",
+          push_title: "Vigía: verificación pendiente",
           push_body: "Análisis parcial. Llamá vos al número oficial.",
           canary_present: false,
         },
@@ -480,7 +507,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const success: AudioProcessSuccess = {
     ok: true,
-    audio_id: randomUUID(),
+    audio_id: audioId,
     transcript_redacted: piiResult.redacted,
     pii_summary: piiSummary,
     decision: triageDecision,

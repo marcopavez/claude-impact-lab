@@ -7,6 +7,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 
+import { logError } from "../log";
 import {
   Citation,
   SourceFetcher,
@@ -371,7 +372,11 @@ export async function runRegulatoryTranslator(
         tool_choice: { type: "tool", name: translateWithCitationsTool.name },
         messages,
       });
-    } catch {
+    } catch (err) {
+      logError("regulatory-translator", err, {
+        attempt,
+        latency_ms: Date.now() - startedAt,
+      });
       return {
         ok: false,
         reason: "model_error",
