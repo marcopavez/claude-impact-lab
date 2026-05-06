@@ -1,26 +1,297 @@
 @import "tailwindcss";
 
+/* ========================================================================
+ * Vigía — design tokens
+ *
+ * Target: adultos mayores 65+ chilenos.
+ *
+ * Decisiones clave:
+ *   - Texto base 19px (clamp 18-20px) para lectura cómoda sin perder layout.
+ *   - Paleta WCAG AAA: contraste ≥7:1 en texto normal, ≥4.5:1 en large text.
+ *   - Focus ring siempre visible (3px outline + offset). NUNCA outline:none.
+ *   - prefers-reduced-motion: animaciones cortas a 1ms y sin transform animado.
+ *   - Solo light mode en MVP — un solo set de tokens reduce errores de contraste.
+ * ====================================================================== */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Superficies */
+  --color-bg: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-2: #f5f5f4;
+  --color-surface-3: #e7e5e4;
+  --color-border: #a8a29e;
+  --color-border-strong: #44403c;
+
+  /* Texto */
+  --color-text: #1c1917;          /* on-bg: 16.5:1 vs #fff (AAA) */
+  --color-text-muted: #44403c;    /* on-bg: 9.6:1 (AAA normal) */
+  --color-text-subtle: #57534e;   /* on-bg: 7.4:1 (AAA normal) */
+
+  /* Marca */
+  --color-brand: #1e3a8a;         /* on-bg: 11.6:1 (AAA) */
+  --color-brand-strong: #1e293b;
+  --color-brand-fg: #ffffff;
+
+  /* Severidades — todas AAA contra fondo blanco */
+  --color-danger: #991b1b;        /* on-bg: 8.6:1 */
+  --color-danger-bg: #fef2f2;
+  --color-danger-fg: #ffffff;
+  --color-warning: #92400e;       /* on-bg: 7.4:1 */
+  --color-warning-bg: #fffbeb;
+  --color-warning-fg: #ffffff;
+  --color-safe: #14532d;          /* on-bg: 9.5:1 */
+  --color-safe-bg: #f0fdf4;
+  --color-safe-fg: #ffffff;
+  --color-neutral: #1f2937;       /* on-bg: 14:1 */
+  --color-neutral-bg: #f8fafc;
+  --color-neutral-fg: #ffffff;
+
+  /* Foco */
+  --color-focus-ring: #1d4ed8;
+  --focus-ring-width: 3px;
+  --focus-ring-offset: 3px;
+
+  /* Tipografía base — clamp asegura 18-20px sin overflow en mobile */
+  --font-size-base: clamp(1.125rem, 0.95rem + 0.5vw, 1.25rem);
+  --line-height-base: 1.6;
+  --font-sans: "Inter", "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Consolas", "Liberation Mono", monospace;
+
+  /* Touch target mínimo (WCAG 2.5.5) */
+  --touch-target-min: 44px;
+
+  /* Radios + sombras suaves para evitar fatiga visual */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --shadow-soft: 0 1px 2px rgba(28, 25, 23, 0.06),
+    0 4px 12px rgba(28, 25, 23, 0.08);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: var(--color-bg);
+  --color-foreground: var(--color-text);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ------------------------------------------------------------------------
+ * Reset focus + base
+ * ---------------------------------------------------------------------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Soporte zoom user-agent + clamp en --font-size-base */
+  font-size: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Foco visible permanente — :focus-visible para no molestar al click,
+ * pero forzamos también :focus por compatibilidad con teclados antiguos. */
+:focus {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-sm);
+}
+
+/* Touch target ≥44×44 en cualquier control interactivo. */
+button,
+[role="button"],
+a.btn,
+input[type="checkbox"],
+input[type="radio"],
+input[type="file"]::file-selector-button {
+  min-height: var(--touch-target-min);
+}
+
+/* Reducir movimiento si el usuario lo pide. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ------------------------------------------------------------------------
+ * Utilidades reutilizables (sin shadcn — Tailwind directo + capa custom)
+ * ---------------------------------------------------------------------- */
+
+.surface-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: var(--touch-target-min);
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radius-md);
+  background: var(--color-brand);
+  color: var(--color-brand-fg);
+  font-weight: 600;
+  font-size: 1.0625rem;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-brand-strong);
+}
+.btn-primary:disabled {
+  background: var(--color-surface-3);
+  color: var(--color-text-subtle);
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: var(--touch-target-min);
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-brand);
+  font-weight: 600;
+  font-size: 1.0625rem;
+  border: 2px solid var(--color-brand);
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+.btn-secondary:hover {
+  background: var(--color-surface-2);
+}
+
+.label-strong {
+  font-weight: 600;
+  color: var(--color-text);
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+}
+
+/* Skip link visible al recibir foco — accesibilidad por teclado. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 1rem;
+  background: var(--color-brand);
+  color: var(--color-brand-fg);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  z-index: 100;
+}
+.skip-link:focus {
+  left: 1rem;
+}
+
+/* Spinner accesible — animation respetando prefers-reduced-motion. */
+@keyframes spin-vigia {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spinner-vigia {
+  width: 2.5rem;
+  height: 2.5rem;
+  border: 4px solid var(--color-surface-3);
+  border-top-color: var(--color-brand);
+  border-radius: 50%;
+  animation: spin-vigia 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner-vigia {
+    animation: none;
+    border-top-color: var(--color-brand);
+    border-style: dashed;
+  }
+}
+
+/* Drop-zone para drag-and-drop del audio. */
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  min-height: 9rem;
+  padding: 1.5rem;
+  border: 2px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+  text-align: center;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+.dropzone:hover,
+.dropzone:focus-within {
+  background: var(--color-surface-3);
+  border-color: var(--color-brand);
+}
+.dropzone[data-active="true"] {
+  background: var(--color-surface-3);
+  border-color: var(--color-brand);
+}
+
+/* Visualmente oculto pero accesible por screen reader. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Placeholder de PII redactado: hover/touch muestra tooltip. */
+.pii-placeholder {
+  display: inline-block;
+  padding: 0 0.25rem;
+  background: #fef3c7;
+  color: #78350f;        /* on bg: 8.4:1 (AAA) */
+  border-radius: 0.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+  font-weight: 600;
+  cursor: help;
+  border: 1px solid #f59e0b;
 }
