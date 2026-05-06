@@ -1,6 +1,10 @@
 # Plan Vigía — capas, tracks técnicos y fallbacks
 
-> **🔄 PIVOTE 2026-05-06 (N19) audio-first MVP.** El plan operativo vigente está en el **Anexo B** al final de este doc. El cuerpo principal abajo (§1 Capa Core con Twilio + Deepgram, §6 Track A telefonía, etc.) queda como **roadmap V2 + contexto histórico**. Para el MVP del Lab se eliminan: Twilio Voice + Media Streams, Deepgram, call forwarding GSM, TwiML, Polly Lupe, whisper.cpp Fly.io. Stack MVP: ElevenLabs Scribe (STT) + ElevenLabs TTS + audios pre-grabados subidos a la PWA. Slash command `/ultraplan` regenera el plan en vivo.
+> **🔄 PIVOTE N20 (2026-05-06) Lean MVP/PoC.** "Algo funcional > algo arquitectónicamente correcto". El **plan operativo vigente está en el Anexo C** (Lean MVP post-N20) al final de este doc. El **Anexo B** (audio-first con DB + auth + Web Push + WhatsApp + SMS, intermedio entre N19 y N20) queda como contexto histórico. El **cuerpo principal abajo** (§1 Capa Core con Twilio + Deepgram + call forwarding GSM, §6 Track A telefonía, etc.) queda como **roadmap V2 + contexto histórico**.
+>
+> **MVP Lean post-N20** elimina: Twilio Voice + SMS, Deepgram, Supabase (Postgres + pgvector + Auth + Storage), Voyage embeddings, RAG vectorial, Web Push (VAPID) persistido, WhatsApp Cloud API, Fly.io worker whisper.cpp. Stack MVP: ElevenLabs Scribe (STT) + ElevenLabs TTS + Next.js 16 stateless + Vercel free tier + JSON estático para fuentes (`apps/web/data/sources/*.json`) y config demo Identity Firewall (`apps/web/data/demo-config.json`). Render del verdict en pantalla.
+>
+> Slash command `/ultraplan` regenera el plan en vivo.
 
 > **Filosofía:** capas concéntricas + tracks técnicos paralelos. Decisiones de scope tomadas en frío, no en caliente. Cada capa con Definition of Done binaria, cada componente con fallback explícito. **Mejor un Core impecable (audio-first cascada agéntica con citas validadas) que un Wow chambón.**
 > **Restricción de la ventana:** todo código de aplicación y mensajes a la consola Anthropic deben estar dentro de la ventana de build (gate B3). Logística de submits y cronograma fino lo lleva Marco aparte; este doc es el plan técnico de implementación.
@@ -682,9 +686,9 @@ Wiki Legal Fintech, BCN Ley Fácil, BCN textos completos (leyes 21.459 / 21.663 
 
 ---
 
-# Anexo B — Plan operativo audio-first vigente (N19, 2026-05-06)
+# Anexo B — Plan operativo audio-first con DB+Auth (N19, 2026-05-06) — **HISTÓRICO**
 
-> **Estado:** este Anexo es la fuente de verdad operativa para el MVP. El cuerpo principal de PLAN.md queda como contexto histórico + roadmap V2. Si hay contradicción, gana este Anexo.
+> ⚠️ **Estado (post-N20):** este Anexo describe el plan audio-first **intermedio** (N19) que conservaba Supabase + auth + Web Push + WhatsApp + SMS. Fue **superseded por el Anexo C (Lean MVP post-N20)** del mismo día. Se mantiene como contexto histórico y como referencia de qué se mueve a V2 cuando se reactive la persistencia. **Si hay contradicción con el Anexo C, gana el Anexo C.**
 
 ## B.1 Stack MVP (deltas vs. cuerpo principal)
 
@@ -797,3 +801,139 @@ W1 Phishing Analyst (texto), W2 Vision pipeline (imagen), W3 Civic Intel page, W
 | **B2 ≥2 tools válidas** | 2 MCPs custom (`mcp-wiki-legal`, `mcp-cmf`) + ≥7 tools SDK (whatsapp-cc, phone-lookup, web-push, sms-twilio, shared-word-check, kba-random-question, denuncia-build, phishtank, urlhaus). |
 | **B3 ≥3 mensajes consola** | Pipeline genera ~10-15 calls por audio (Triage + Verifier + Regulatory + Vishing + Notifier + tools). 3 audios demo × 10 calls = 30+ mensajes en ventana. |
 | **B4 demo end-to-end** | Subida en vivo de los 3 audios → cascada → verdict + push. Demo ultra-estable (sin telefonía = sin crash). |
+
+---
+
+# Anexo C — Plan operativo Lean MVP/PoC (N20, 2026-05-06) — **VIGENTE**
+
+> ✅ **Estado:** este Anexo es la **fuente de verdad operativa para el MVP/PoC del Lab**. Si hay contradicción con el cuerpo principal o con el Anexo B, gana este Anexo.
+>
+> **Filosofía N20:** "Algo funcional > algo arquitectónicamente correcto." El MVP/PoC valida el motor de detección frente al jurado. Toda capa de persistencia + auth + cross-channel push se mueve a V2.
+
+## C.1 Stack MVP Lean (deltas vs. Anexo B)
+
+| Capa | MVP Lean (N20, vigente) | Antes (audio-first con DB, N19, Anexo B) |
+|---|---|---|
+| Audio input | **Sin cambios:** drag-and-drop MP3/M4A/WAV ≤60s en PWA | igual |
+| STT | **Sin cambios:** ElevenLabs Scribe v1 batch | igual |
+| TTS | **Sin cambios:** ElevenLabs (`eleven_v3`) — generar 3 audios demo + opcional verdict hablado | igual |
+| Backend | **Next.js 16 API route stateless** (audio en memoria, descarte tras response) | Next.js + Supabase Storage + signed URLs |
+| Persistencia | **Ninguna** (servidor stateless) | Supabase Postgres + pgvector + Storage con TTL 24h |
+| Auth | **Sin auth, sin login** (PWA single-page demo público) | Supabase Auth magic link + JWT 7d |
+| Fuentes regulatorias | **`apps/web/data/sources/*.json` snapshot estático** + fetch HTTP en caliente para post-validator | RAG vectorial pgvector + Voyage `voyage-3` |
+| Identity Firewall config | **`apps/web/data/demo-config.json` hardcoded para María** (whitelist + shared word + KBA hasheados) | Tablas Supabase con RLS por `caregiver_id` |
+| Notificación | **Render del verdict en pantalla** + opcional `Notification` API in-page | Web Push VAPID + WhatsApp Cloud + SMS Twilio fallback |
+| MCPs custom | **Diferidos a V2** (snapshot JSON cubre A5/A6 sin MCP separado; opcional convertir `tool-citation-fetch` en MCP si se quiere narrativa) | `mcp-wiki-legal` (RAG pgvector + Voyage) + `mcp-cmf` (snapshot) |
+| Tools del SDK | `tool-citation-fetch`, `tool-phone-lookup`, `tool-shared-word-check`, `tool-kba-random-question`, `tool-phishtank` (Wow), `tool-urlhaus` (Wow), `tool-denuncia` (Sólido) | misma lista + `tool-whatsapp-cc`, `tool-web-push`, `tool-sms-twilio` |
+| Hosting | **Vercel free tier** | Vercel + Supabase + (Fly.io para whisper.cpp en V2) |
+| LLM cascada | **Sin cambios:** Sonnet 4.6 + Opus 4.7 + extended thinking + Haiku 4.5 | igual |
+
+**Eliminado del MVP** (queda en V2): Twilio Voice + SMS, Deepgram, Supabase (Postgres + pgvector + Auth + Storage), Voyage AI embeddings, RAG vectorial, Web Push (VAPID), WhatsApp Cloud API, Fly.io worker whisper.cpp, MCPs custom standalone.
+
+## C.2 Path crítico (Lean)
+
+```
+[1. npm install: solo @anthropic-ai/sdk + ElevenLabs + Next.js (no Supabase, no web-push, no twilio)]
+        ↓
+[2. apps/web/lib/clients/elevenlabs.ts (Scribe + TTS)]   → primer call API en ventana, activa B3
+        ↓
+[3. apps/web/data/sources/*.json — snapshot regulatorio con quotes pre-extraídos
+    (Wiki Legal Fintech + BCN + CMF + Sernac + CSIRT + PDI + Subtel)]
+        ↓
+[4. apps/web/data/demo-config.json — whitelist + shared word `quiltro feliz` + 3 KBA hardcoded para María]
+        ↓
+[5. apps/web/lib/validators/pii.ts (regex chileno)]
+        ↓
+[6. apps/web/lib/validators/citations.ts (fetch HTTP + substring NFKC + Levenshtein 0.95)]
+        ↓
+[7. apps/web/lib/agents/{triage,identity-verifier,regulatory,vishing-analyst,notifier}.ts
+    (system prompts canónicos del SEGURIDAD.md Parte IV, tool_choice required, citations[] minItems:1)]
+        ↓
+[8. apps/web/lib/tools/{citation-fetch,phone-lookup,shared-word-check,kba-random-question}.ts]
+        ↓
+[9. apps/web/app/api/audio/process/route.ts — POST multipart → Scribe → cascada → response JSON]
+        ↓
+[10. PWA UI: drag-and-drop + 3 botones audios demo + render verdict + transcript + citations + tools + modelo]
+        ↓
+[11. apps/web/public/demo-audios/* — 3 audios pre-renderizados con ElevenLabs TTS]
+        ↓
+[12. 3 audios E2E pasan: cuento del tío→fraud HIGH, banco oficial→suspicious MEDIUM, familiar→legit LOW]
+        ↓
+                  tag v0.1-mvp-audio
+```
+
+## C.3 Capa Core Lean (`v0.1-mvp-audio`)
+
+| # | Ítem | Δ vs. Anexo B | Sub-check | Esfuerzo |
+|---|---|---|---|---|
+| 1 | `npm install` mínimo: `@anthropic-ai/sdk`, `@elevenlabs/elevenlabs-js`. **Eliminar** del package.json: `@supabase/*`, `web-push`, `twilio`, `voyageai` | MOD | prereq | 0.1h |
+| 2 | `apps/web/lib/clients/elevenlabs.ts` — `transcribeAudio(buf)` (Scribe v1) + `generateAudio(text, voiceId)` (TTS) | igual a Anexo B | B2, B3 (primer call) | 0.5h |
+| 3 | `apps/web/data/sources/{wiki-legal,bcn,cmf,sernac,csirt,pdi,subtel}.json` — snapshot manual con quotes pre-extraídos por tema (vishing/cuento del tío, fraude informático Ley 21.459, Ley 21.521 entidades autorizadas, alertas Sernac, etc.). Cada entry: `{ source_url, quoted_text, theme[] }`. | NUEVO | A5, A6 | 1.5h |
+| 4 | `apps/web/data/demo-config.json` — whitelist (`+56XXXXXXXXX → Sofía nieta` + `+56YYYYYYYYY → Dr. Pizarro` + `BancoEstado oficial`), shared word `quiltro feliz` hasheado (argon2id), 3 KBA con respuestas hasheadas | NUEVO | N13, N15, N16 | 0.5h |
+| 5 | `apps/web/lib/validators/pii.ts` — regex chileno (RUT con dígito verificador + móvil chileno + IBAN + tarjeta Luhn + dirección heurística) | igual | A4, A6 | 0.75h |
+| 6 | `apps/web/lib/validators/citations.ts` — fetch HTTP con allowlist de dominios + bloqueo de IPs privadas + substring NFKC + Levenshtein ≥0.95 + retry 1× con feedback + fail-safe silencioso | igual | A6 | 1.5h |
+| 7 | `apps/web/lib/prompts/*.md` — system prompts canónicos copiados literal de `docs/SEGURIDAD.md` Parte IV (Call Triage, Identity Verifier modo batch, Regulatory Translator, Vishing Analyst, Caregiver Notifier) | igual | B1 | 1h |
+| 8 | `apps/web/lib/agents/{triage,identity-verifier,regulatory,vishing-analyst,notifier}.ts` — cada uno usa Anthropic SDK con `tool_choice: required`, schema `citations[] minItems:1` cuando aplica, modelo correcto (Sonnet/Opus/Haiku) | MOD | B1, B2, B3, J3.4 | 3h |
+| 9 | `apps/web/lib/tools/{citation-fetch,phone-lookup,shared-word-check,kba-random-question}.ts` — wrappers SDK. `citation-fetch` usa `validators/citations.ts`. `phone-lookup` lee snapshot Subtel JSON. `shared-word-check` y `kba-random-question` leen `data/demo-config.json` | MOD | B2 (≥2 tools) | 1.5h |
+| 10 | `apps/web/app/api/audio/process/route.ts` — POST multipart parse → Buffer → Scribe → PII redactor → cascada (Triage → Verifier → Regulatory → Vishing → Notifier) → response JSON `{transcript, verdict, severity, citations[], tools_used[], model_used[], challenge_plan, latency_ms}`. **Stateless: ningún side-effect persistido.** | MOD | A3, B4 | 2h |
+| 11 | `apps/web/public/demo-audios/{cuento-del-tio,banco-oficial,familiar-legitimo}.mp3` — 3 audios pre-renderizados con ElevenLabs TTS (≤60s c/u, voz es-CL). Marco redacta scripts | igual | A3, B4, J3.1 | 1h |
+| 12 | PWA UI single-page (`apps/web/app/page.tsx`): drag-and-drop zone + 3 botones "usar audio demo" + checkbox consentimiento + audio player + render del verdict (verdict + severity badge + transcript con redacción + citations validadas con links + tools_used + model_used + challenge_plan) + opcional `Notification` API request | MOD | A1, A3, J3.2 | 3h |
+| 13 | 3 audios E2E pasan en vivo: cuento del tío → **fraud HIGH** + cita Ley 21.459 art. 7 + alerta Sernac; banco oficial → **suspicious MEDIUM** + lookup CMF; familiar legítimo → **legit LOW** | MOD | B4, J1.3, J3.1 | 1h |
+
+**Total Capa Core Lean: ~16.4h** (vs. ~24h del Anexo B). Margen claro dentro de la ventana ~20h. El delta viene de eliminar todo lo relacionado con Supabase + RLS + auth + Web Push + WhatsApp + SMS + RAG + MCPs.
+
+## C.4 Capa Sólido (`v0.5-solid`) — opcional si Capa Core cierra antes
+
+Si Capa Core cierra con holgura, agregar (priorizado):
+
+| # | Ítem | Sub-check | Esfuerzo |
+|---|---|---|---|
+| S1 | Golden set adversarial ≥35 inputs JSONL en `apps/eval/golden-set/{triage,identity-verifier,regulatory,vishing}.jsonl` + runner que ejecuta los agentes contra los fixtures (sin DB; archivos JSON) | A5, A6, B4 | 3h |
+| S2 | Multi-modelo evidente en logs y UI: badge por modelo (Sonnet 4.6 / Opus 4.7 / Haiku 4.5) + extended thinking visible en Vishing | M3 multi-modelo, J3.4 | 0.5h |
+| S3 | UI pulida (responsive 65+, fuentes grandes, contraste alto) | A1, J3.2 | 1.5h |
+| S4 | `tool-denuncia` Builder PDF con citation embedded — Sernac/CMF según tipo de fraude | B2, J2.3 | 2h |
+| S5 | Phishing Analyst (`apps/web/lib/agents/phishing-analyst.ts`) + tool `phishtank` y `urlhaus` (canal texto Wow ligero) | M3 cascada extra, J2.3 | 2h |
+
+**Total Capa Sólido: ~9h.** Solo si Core entra holgado. Si no, queda en V2.
+
+## C.5 Capa Wow — diferido a V2
+
+Civic Intel page, WhatsApp webhook full bidireccional, Vision pipeline (canal imagen screenshot SMS), persistencia + auth + multi-cuidador, telefonía live (Twilio Voice + Media Streams + call forwarding GSM) — **todo V2**. No hay capa Wow en MVP/PoC Lean por diseño.
+
+## C.6 Riesgos top (Lean)
+
+| Riesgo | Probabilidad | Mitigación inmediata |
+|---|---|---|
+| ~~Twilio DID Chile KYC~~ | eliminado | — |
+| ~~Deepgram rate limit~~ | eliminado | — |
+| ~~Supabase migrations rotas en demo~~ | eliminado por N20 (sin DB) | — |
+| ~~Supabase Auth magic link no llega~~ | eliminado por N20 (sin auth) | — |
+| ~~Web Push subscription no persiste~~ | eliminado por N20 (render en pantalla) | — |
+| ~~WhatsApp Cloud KYC Meta~~ | eliminado por N20 | — |
+| ElevenLabs Scribe latencia (5-15s sobre audio 60s) | baja | Pre-procesar los 3 audios demo en build time y cachear transcripts opcionalmente. Bajo umbral J3.3 (<30s). |
+| Citation post-validator falla por cambio de copy en URL fuente | media | Snapshot JSON estático cubre el caso default; el fetch en vivo es validación adicional. Si falla → respuesta literal *"no encontré fuente"*. |
+| Identity Firewall narrativa debilitada (sin verificación en vivo) | media | Defender en Q&A: *"el firewall en vivo es V2 con telefonía + persistencia; MVP demuestra el motor de detección + challenge plan que alimenta ese firewall — los 35 casos del golden set lo validan en CI"*. |
+| Cuotas LLM USD 50 | baja | Haiku en Classifier opcional + cost budget hard cap por sesión. Lean cascada usa menos tokens que la full. |
+| Pregunta jurado *"¿por qué sin DB?"* | alta | Respuesta preparada: cero PII en reposo es ventaja regulatoria Ley 21.719 + reduce blast radius del demo. Persistencia + cuentas reales = V2 con cuidadores reales. |
+
+## C.7 Próximas 3 acciones concretas
+
+1. **Formalizar N20** — `/decision-record` con título *"Pivote Lean MVP/PoC"* consolidando reformulaciones N9/N10/N11/N13/N15 + reemplazos N17/N18 + obsoletas para MVP (Supabase Postgres + pgvector + Storage + magic link + Web Push persistido + WhatsApp Cloud + SMS Twilio + RAG vectorial Voyage). Sustenta defensa Q&A. **[Marco aprueba contenido].** [0.25h] — **YA HECHO en este commit**.
+2. **Crear `apps/web/data/sources/*.json`** — snapshot manual con 3-5 quotes por fuente oficial (Wiki Legal Fintech + BCN Ley Fácil + CMF Alertas + Sernac + CSIRT + PDI Cibercrimen + Subtel), cada uno con `{source_url, quoted_text, theme[]}`. Sin esto la cascada no puede citar. [1.5h]
+3. **Crear `apps/web/lib/clients/elevenlabs.ts`** — wrapper Scribe + TTS. Smoke test: transcribir uno de los 3 audios demo. **Es el primer call API en ventana → activa sub-check B3.** [0.5h]
+
+## C.8 Sub-checks: cómo cumplen en Lean MVP
+
+| Sub-check | Cómo cumple en MVP Lean (post-N20) |
+|---|---|
+| **A1 sin jerga** | Voz ElevenLabs es-CL en TTS opcional + UI PWA legible nivel sexto básico + transcripts redactados con PII out. |
+| **A2 segmento** | Adultos mayores 65+ Chile (2.4M INE 2026). |
+| **A3 canal concreto** | **PWA installable Vercel + audio upload single-page sin auth** (drag-and-drop). Add-to-Home-Screen. |
+| **A4 impacto cuantificado** | **Tiempo detección 72h → ~30s** (procesamiento Scribe ~10s + cascada ~15s + render ~instant). |
+| **A5 ≥2 fuentes** | ≥7 fuentes en `apps/web/data/sources/*.json` (BCN, CMF, Sernac, CSIRT, PDI, Subtel, Wiki Legal Fintech) con quotes pre-extraídos. |
+| **A6 sin alucinaciones** | `tool_choice: required` + schema `citations[] minItems:1` + post-validator determinista (fetch HTTP en caliente → substring NFKC → Levenshtein 0.95). **Refuerzo N20:** cero PII en reposo = compliance Ley 21.719 por diseño. |
+| **B1 system prompts** | 5+ dedicados (Triage, Identity Verifier modo demostración, Regulatory Translator, Vishing Analyst Opus, Caregiver Notifier). Phishing Analyst y Denuncia Builder opcionales en Sólido. |
+| **B2 ≥2 tools válidas** | ≥6 tools del SDK (`tool-citation-fetch`, `tool-phone-lookup`, `tool-shared-word-check`, `tool-kba-random-question`, `tool-phishtank` Wow, `tool-urlhaus` Wow, `tool-denuncia` Sólido). MCPs custom diferidos a V2 (snapshot JSON cubre A5/A6 sin servidor MCP separado). |
+| **B3 ≥3 mensajes consola** | Pipeline genera ~10-15 calls Claude por audio (Triage + Verifier + Regulatory + Vishing Opus + Notifier + tools). 3 audios demo × 10 calls = 30+ mensajes en ventana. |
+| **B4 demo end-to-end** | Subida en vivo de los 3 audios → cascada → verdict renderizado en pantalla. **Demo Lean ultra-estable** (sin Twilio, sin DB, sin auth, sin servicios externos persistidos = sin puntos de falla cross-network). |
+

@@ -1,8 +1,12 @@
 # Vigía — proyecto
 
-> 🔄 **Pivote N19 (2026-05-06) audio-first MVP.** Este documento describe la arquitectura completa **incluyendo el roadmap V2 phone-first vivo** (Twilio Programmable Voice + Media Streams µ-law + call forwarding GSM + Deepgram + Polly Lupe-Neural). El **MVP del Lab es audio-first**: el cuidador o la persona protegida sube audios sospechosos a la PWA y Vigía los analiza con la cascada agéntica. Para el plan operativo MVP vigente ver `docs/PLAN.md` Anexo B; para decisiones cerradas N1-N19 ver `docs/SEGURIDAD.md §31`. Las secciones 9 a 14 (arquitectura técnica, flujo de llamada, schema) describen la visión completa V2 — son contexto histórico + roadmap, no la implementación MVP.
+> 🔄 **Pivote N20 (2026-05-06) Lean MVP/PoC.** "Algo funcional > algo arquitectónicamente correcto". Para el MVP/PoC del Lab el proyecto **NO usa Twilio (Voice ni SMS), Deepgram, base de datos (Supabase Postgres + pgvector + Storage), ni auth (magic link)**. Servidor stateless, audio en memoria por request, fuentes regulatorias en JSON estático con quotes pre-extraídos + fetch HTTP en caliente para post-validator, config demo Identity Firewall hardcoded para María en `apps/web/data/demo-config.json`, render del verdict en pantalla. Toda la capa de persistencia + auth + cross-channel push (Web Push + WhatsApp + SMS) + RAG vectorial Voyage se mueve a V2. Detalle en `docs/SEGURIDAD.md §31` Bloque 7.
+>
+> **Cómo leer este documento:** las secciones 1-8 (concepto + ficha cívica) están actualizadas al MVP Lean. Las secciones 9-14 (arquitectura técnica, flujo de llamada en vivo, schema Supabase) **describen la visión completa V2** — son contexto histórico + roadmap V2, no la implementación MVP. Para el stack vigente ver §11 (anotado con N19/N20) y `docs/PLAN.md` Anexo C. Para decisiones cerradas N1-N20 ver `docs/SEGURIDAD.md §31`.
+>
+> **Pivotes previos:** N19 (2026-05-06) audio-first — descartó Twilio Voice + Deepgram + Polly + call forwarding GSM del MVP, mantuvo Supabase + auth + Web Push + WhatsApp + SMS. N20 (mismo día) lleva la lógica al límite: stateless, sin auth, render en pantalla.
 
-> **Track de competencia:** Línea 02 — Ciberseguridad Ciudadana. Por diseño cruza Línea 01 (traduce regulación a lenguaje ciudadano con citas obligatorias) y Línea 03 (consentimiento legal explícito vía checkbox al subir audio + texto en onboarding PWA en MVP, primer TTS en V2; PII efímera con TTL 24h; derechos ARCO+ Ley 21.719 expuestos vía endpoints export/delete).
+> **Track de competencia:** Línea 02 — Ciberseguridad Ciudadana. Por diseño cruza Línea 01 (traduce regulación a lenguaje ciudadano con citas obligatorias) y Línea 03 (consentimiento legal explícito vía checkbox al subir audio + texto en onboarding PWA; **cero PII en reposo en MVP por servidor stateless** = cumplimiento Ley 21.719 por diseño; ARCO+ trivialmente cumplido por ausencia de almacenamiento. V2 con DB activa expone endpoints export/delete formales).
 >
 > **Doble función:** este documento es (a) la narrativa del proyecto y (b) la **ficha cívica oficial** que se submitirá según `docs/EVENT/BASES.md §4`. Las secciones 1 a 8 cumplen el formato exigido para los sub-checks A1–A5.
 
@@ -10,9 +14,9 @@
 
 ## Concepto en una frase
 
-**Vigía es un detector de vishing con firewall de identidad** que protege a adultos mayores chilenos contra estafas telefónicas. **MVP audio-first (N19, 2026-05-06):** el cuidador o la persona protegida sube un audio sospechoso a la PWA, Claude lo analiza con una cascada agéntica (Triage → Identity Verifier → Regulatory Translator → Vishing Analyst Opus 4.7), y entrega verdict + citas regulatorias validadas + push al cuidador en ~30s. **Roadmap V2:** funciona vía desvío de llamadas (`**21*<DID>#`) desde el celular real de la persona protegida hacia un DID Twilio chileno, donde Claude analiza la llamada en tiempo real, autentica al llamante con un protocolo multi-factor (caller_id + palabra clave familiar + KBA + verificación cruzada por WhatsApp), y decide si transferir, tomar mensaje o colgar.
+**Vigía es un detector de vishing con firewall de identidad** que protege a adultos mayores chilenos contra estafas telefónicas. **MVP/PoC Lean (N20, 2026-05-06):** el cuidador o la persona protegida sube un audio sospechoso a la PWA single-page (sin login), Claude lo analiza con una cascada agéntica (Triage → Identity Verifier → Regulatory Translator → Vishing Analyst Opus 4.7), y entrega verdict + citas regulatorias validadas + render en pantalla en ~30s. **El servidor es stateless** — el audio entra por multipart, se procesa en memoria, se descarta tras devolver el verdict. **Roadmap V2:** persistencia (Supabase) + auth (magic link) + cross-channel push (Web Push + WhatsApp + SMS); telefonía live vía desvío de llamadas (`**21*<DID>#`) desde el celular real de la persona protegida hacia un DID Twilio chileno, donde Claude analiza la llamada en tiempo real, autentica al llamante con un protocolo multi-factor (caller_id + palabra clave familiar + KBA + verificación cruzada por WhatsApp), y decide si transferir, tomar mensaje o colgar.
 
-**Vigía baja el tiempo de detección de 72 horas a ~30s** (MVP audio-first) o **a tiempo real** (V2 con telefonía). El llamante nunca llega a la víctima si no pasa el firewall.
+**Vigía baja el tiempo de detección de 72 horas a ~30s** (MVP Lean) o **a tiempo real** (V2 con telefonía). En MVP el motor de detección genera un challenge plan recomendado al cuidador; en V2 ejecuta verificación en vivo y el llamante no llega a la víctima si no pasa el firewall.
 
 ---
 
@@ -179,26 +183,42 @@ Todas las fuentes son **públicas y citables**, ninguna requiere convenio. La ci
 
 ## 9. Compromiso con manejo responsable de datos personales
 
-Vigía está diseñado desde el día uno bajo el principio **PII al mínimo y efímera**:
+Vigía está diseñado desde el día uno bajo el principio **PII al mínimo y efímera**. **En MVP/PoC Lean (N20) este principio se lleva al límite: cero PII en reposo, servidor stateless.**
 
-- **Audios y transcripts:** TTL 24h con signed URLs que expiran al cerrar el dashboard del cuidador. La grabación se hace con **consentimiento legal explícito incorporado al primer TTS de Vigía** ("esta llamada está siendo analizada para protección"), satisfaciendo Chile one-party-consent y notificando al llamante.
-- **Redacción determinista de PII** (RUT chileno, móvil chileno, tarjeta con Luhn, cuenta bancaria heurístico) **antes** de logs, antes de embeddings, antes de cualquier persistencia. El modelo Claude analiza siempre `<RUT_REDACTED>`, no el valor real.
-- **Shared words y respuestas KBA hasheadas** (bcrypt o argon2id) en reposo. Plain solo en memoria de la sesión activa.
-- **No re-identificación** de PhishTank, URLhaus, alertas CMF, ni datos del Civic Intel Dashboard. El dashboard agrega y anonimiza con k-anonymity sobre región/segmento y hash sobre URLs/audios antes de mostrar.
-- **No indexamos contenido del usuario en pgvector.** Solo indexamos fuentes oficiales (Wiki Legal, BCN Ley Fácil, CMF, leyes BCN, alertas Sernac, boletines CSIRT/PDI). Esto elimina por construcción la inyección indirecta vía RAG.
+**MVP Lean post-N20:**
+
+- **Audios y transcripts:** **no se persisten.** El audio entra por multipart al endpoint `/api/audio/process`, vive como `Buffer` Node en memoria del request, pasa por ElevenLabs Scribe, atraviesa la cascada agéntica, y se descarta cuando el response retorna. Sin Supabase Storage, sin signed URLs, sin TTL — porque no hay almacenamiento.
+- **Consentimiento legal explícito** vía checkbox obligatorio al subir audio (*"el llamante fue notificado o la grabación es one-party-consent"*) + texto en onboarding PWA. La marca no se persiste; se valida por request.
+- **Redacción determinista de PII** (RUT chileno, móvil chileno, tarjeta con Luhn, cuenta bancaria heurístico) **antes** de logs aplicación y antes de cualquier llamada al modelo. El modelo Claude analiza siempre `<RUT_REDACTED>`, no el valor real.
+- **Shared words y respuestas KBA hasheadas** en `apps/web/data/demo-config.json` commiteado al repo (config demo de María). Plain solo en memoria del request al verificar.
+- **Sin RAG sobre contenido del usuario.** En MVP no hay RAG vectorial (eliminado por N20). Las fuentes regulatorias son `apps/web/data/sources/*.json` con quotes pre-extraídos manualmente + fetch HTTP en caliente sobre las ~7 URLs canónicas para el post-validator.
+- **No re-identificación** de PhishTank, URLhaus, alertas CMF.
+
+**V2 con persistencia activa:**
+
+- Audios y transcripts con TTL 24h en Supabase Storage + signed URLs que expiran al cerrar el dashboard.
+- Indexación pgvector solo de fuentes oficiales (Wiki Legal, BCN Ley Fácil, CMF, alertas Sernac, boletines CSIRT/PDI). Nunca contenido de usuario. Elimina V5 por construcción.
+- Shared words y KBA hasheadas (bcrypt/argon2id) en DB con RLS por `caregiver_id`.
+- Civic Intel Dashboard con k-anonymity sobre región/segmento y hash sobre URLs/audios.
+- Notificación legal incorporada al primer TTS de Vigía en V2 con telefonía: *"esta llamada está siendo analizada para protección"*.
 
 **Diseñado para Ley 21.719 (Nueva Ley de Protección de Datos), vigencia 1-dic-2026 — siete meses después del Lab:**
 
-- **Derechos ARCO+** (Acceso, Rectificación, Cancelación, Oposición + Portabilidad + Bloqueo) por diseño: la PWA del cuidador expone endpoints `/api/export` (genera ZIP con todos los datos del cuidador y la persona protegida) y `/api/account DELETE` (cascade delete con right-to-be-forgotten).
-- **Notificación de brechas <72h** definida en runbook operativo.
+- **Derechos ARCO+** (Acceso, Rectificación, Cancelación, Oposición + Portabilidad + Bloqueo) por diseño:
+  - **MVP Lean:** se cumplen trivialmente por ausencia de almacenamiento — no hay datos del cuidador ni de la persona protegida que acceder/rectificar/cancelar/oponer/portar.
+  - **V2:** la PWA del cuidador expone endpoints `/api/export` (genera ZIP con todos los datos) y `/api/account DELETE` (cascade delete con right-to-be-forgotten).
+- **Notificación de brechas <72h** definida en runbook operativo (V2; en MVP Lean la superficie de brecha es mínima — sin DB, sin tokens persistidos, sin auth).
 - **Registro de actividades de tratamiento** documentado en `SEGURIDAD.md` con flujos, fronteras de confianza y retención.
 - **Sin profiling individual.** Métricas analíticas solo agregadas y anónimas (canal, veredicto, latencia, tools_used, model_used) sin PII.
 
-Cruza Línea 03 explícitamente como diferenciador, no como checkbox.
+Cruza Línea 03 explícitamente como diferenciador, no como checkbox. **El MVP Lean refuerza el cruce:** cero PII en reposo es la forma más fuerte de cumplimiento por diseño.
 
 ---
 
 ## 10. Arquitectura
+
+> ⚠️ **El diagrama y schema de las §§10-11 describen la visión completa V2 phone-first vivo con persistencia.** El **MVP Lean post-N20** opera con un subset radicalmente más simple: PWA single-page → POST `/api/audio/process` (Next.js route handler stateless) → ElevenLabs Scribe → cascada Claude → response JSON renderizado en pantalla. **Sin Twilio, sin Deepgram, sin Polly, sin Supabase, sin auth, sin Web Push, sin WhatsApp, sin SMS, sin RAG vectorial.** Las fuentes regulatorias viven en `apps/web/data/sources/*.json` (snapshot estático), la config Identity Firewall en `apps/web/data/demo-config.json` (hardcoded para María). Para el flujo MVP detallado ver `RESUMEN/04-FLUJO-LLAMADA.md`. La §10-11 que sigue es contexto V2.
+
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -313,6 +333,8 @@ Cruza Línea 03 explícitamente como diferenciador, no como checkbox.
 
 ## 11. Stack y decisiones
 
+> ⚠️ **La tabla siguiente es la del producto final ideal (V2).** Para el stack vigente del MVP Lean post-N20 ver `CLAUDE.md` raíz §"Stack MVP/PoC (Lean, post-N20)" y `RESUMEN/02-ARQUITECTURA.md`. Diferencias clave para el MVP: sin Twilio Voice ni Media Streams, sin Deepgram, sin whisper.cpp, sin Polly, sin pgvector, sin Voyage embeddings, sin Supabase (ni DB ni Auth ni Storage), sin Fly.io, sin Web Push persistido, sin WhatsApp Cloud API, sin SMS Twilio. Lo que sí: Sonnet/Opus/Haiku + ElevenLabs Scribe + ElevenLabs TTS + Next.js 16 stateless + Vercel free tier + JSON estático para fuentes y config demo.
+
 | Capa | Elección | Justificación |
 |---|---|---|
 | **LLM motor** | **Sonnet 4.6** (Triage, Identity Verifier, Phishing, Regulatory, Denuncia, Notifier) + **Opus 4.7 + extended thinking** (Vishing Analyst post-call) + **Haiku 4.5** (Classifier rápido) | Sonnet 4.6 mejor relación reasoning/latencia para llamada en vivo (<2s p50). Opus 4.7 con extended thinking en post-call donde latencia 10-30s es aceptable y un FN es máximo costo. Haiku para clasificación trivial. Multi-modelo declarado = bonus M3. |
@@ -371,10 +393,10 @@ Cruza Línea 03 explícitamente como diferenciador, no como checkbox.
 
 Score final = **40% mentor (10 sub-checks) + 60% juez (12 sub-checks, solo si Top 4)**. Texto literal de la rúbrica en `docs/EVENT/RUBRICA.md`. **Matriz operativa con evidencia exigida, owner y artefacto entregable en `PLAN.md` §"Sub-checks operativos"**.
 
-**Resumen:**
-- **M1 problema/ciudadano (20%)** cubierto por ficha cívica (este doc, secciones 1-9) + canal call forwarding + cifra 2.4M adultos mayores INE 2026.
-- **M2 datos responsables (20%)** cubierto por ≥7 fuentes regulatorias (Wiki Legal Fintech, BCN, CMF, Sernac, CSIRT, PDI, Subtel) + citation validator determinista.
-- **M3 Claude + arquitectura agéntica (35%, primer desempate)** cubierto por 6+ system prompts dedicados, 2 MCPs custom + ≥8 tools SDK, pipeline phone-first generando decenas de calls por llamada.
-- **M4 funciona (25%)** cubierto por demo en vivo de llamada real con call forwarding + 3 llamadas pre-validadas + backup video pre-grabado sin transición visible.
+**Resumen (MVP Lean post-N20):**
+- **M1 problema/ciudadano (20%)** cubierto por ficha cívica (este doc, secciones 1-9) + canal **PWA + audio upload** + cifra 2.4M adultos mayores INE 2026.
+- **M2 datos responsables (20%)** cubierto por ≥7 fuentes regulatorias (Wiki Legal Fintech, BCN, CMF, Sernac, CSIRT, PDI, Subtel) en `apps/web/data/sources/*.json` con quotes pre-extraídos + citation validator determinista (fetch HTTP en caliente + Levenshtein 0.95). **Bonus N20:** cero PII en reposo (servidor stateless) = compliance Ley 21.719 por diseño.
+- **M3 Claude + arquitectura agéntica (35%, primer desempate)** cubierto por 5+ system prompts dedicados + ≥6 tools del SDK + pipeline Lean generando ~10-15 calls por audio. (En MVP Lean los MCPs custom quedan opcionales — el snapshot JSON estático cubre A5/A6 sin necesidad de servidor MCP separado; se pueden reintroducir como MCP que sirva el JSON si se quiere narrativa.)
+- **M4 funciona (25%)** cubierto por demo en vivo de los 3 audios pre-validados + cascada procesa + verdict renderizado en pantalla. **Demo Lean ultra-estable** — sin Twilio que crashee, sin DB que migrar, sin auth que fallar, sin servicios externos persistidos = sin puntos de falla cross-network durante el pitch.
 
 **Selección y desempate:** Top 4 por vertical → 12 finalistas (cron 7-mayo 09:00 sobre score_mentor). Desempate finalistas: M3 > M2 > M1 > timestamp. 6 ganadores totales (2 por vertical).

@@ -1,5 +1,11 @@
 # Seguridad Vigía — defensa técnica integral
 
+> 🔄 **Pivote N20 (2026-05-06) Lean MVP/PoC.** "Algo funcional > algo arquitectónicamente correcto". El **MVP/PoC del Lab no usa Twilio (Voice/SMS), Deepgram, base de datos (Supabase Postgres + pgvector + Storage), ni auth (magic link)**. Servidor stateless, audio en memoria por request, fuentes regulatorias en `apps/web/data/sources/*.json` (snapshot estático con quotes pre-extraídos) + fetch HTTP en caliente para post-validator, config Identity Firewall hardcoded en `apps/web/data/demo-config.json`, render del verdict en pantalla. Toda la capa de persistencia + auth + cross-channel push (Web Push + WhatsApp + SMS) + RAG vectorial Voyage se mueve a V2.
+>
+> **Cómo afecta este doc:** las Partes I (threat model V1-V22), II (Identity Firewall niveles), IV (prompts canónicos), V (consentimiento + golden set + decisiones) **siguen aplicando idénticas** — son la columna vertebral del proyecto. La **Parte III (PWA cuidador) describe la versión V2 con auth + onboarding**; en MVP la PWA es single-page demo público sin login, drag-and-drop audio + 3 botones audios demo + render del verdict. Los §6 (esquemas de datos) y §11 (state machine) **describen la versión V2 con DB**; en MVP no hay tablas — los esquemas son TypeScript types in-memory por request, la state machine corre dentro del handler stateless. La §31 incluye Bloque 7 con N20.
+>
+> **Decisiones cerradas: ahora N1-N20.** Detalle N20 en §31 Bloque 7.
+
 > **Función:** documento único de defensa técnica del proyecto. Cubre threat model, identity firewall, especificación de la PWA del cuidador, prompts canónicos por agente, golden set adversarial, decisiones cerradas y Q&A red team.
 > **Audiencia:** equipo técnico durante implementación + jurado durante Q&A.
 > **Cómo leerlo:** TOC abajo. Las 6 partes son independientes — entra directo a la que necesitas.
@@ -21,7 +27,7 @@
 - §19 Reglas comunes · §20 Call Triage · §21 Identity Verifier · §22 Vishing Analyst · §23 Regulatory Translator · §24 Caregiver Notifier · §25 Phishing Analyst · §26 Denuncia Builder · §27 Classifier · §28 Notas implementación
 
 **Parte V — Consentimiento, golden set y decisiones cerradas**
-- §29 Consentimiento legal de grabación · §30 Golden set adversarial · §31 Decisiones cerradas N1-N18
+- §29 Consentimiento legal de grabación · §30 Golden set adversarial · §31 Decisiones cerradas N1-N20
 
 **Parte VI — Anti-patrones y Q&A red team**
 - §32 Anti-patrones explícitos · §33 Q&A defensivo · §34 Referencias técnicas
@@ -1190,7 +1196,7 @@ Si el llamante continúa hablando después de esa notificación → consentimien
 
 Ubicación: `packages/eval/golden/*.json` con schema `{id, input, expected: {verdict_in, must_cite_one_of, must_flag_si: bool}}`.
 
-## 31. Decisiones cerradas N1-N19
+## 31. Decisiones cerradas N1-N20
 
 Decisiones **confirmadas y son contrato del producto**. Cualquier cambio requiere actualizar este doc + memoria + revisión por pares.
 
@@ -1270,6 +1276,51 @@ Decisiones **confirmadas y son contrato del producto**. Cualquier cambio requier
   **Defensa Q&A para el pivote:**
   - *"¿Por qué no llamada en vivo?"* → "El motor de detección de vishing es el aporte central; en MVP lo validamos con audios pre-grabados sobre el golden set adversarial (35 casos, 100% bloques V21/V22/V17/V19). La capa de telefonía live (Twilio Voice + Media Streams + call forwarding GSM) está en el roadmap V2 con todos los detalles arquitectónicos en `docs/PLAN.md` cuerpo principal — es continuación inmediata, no replanteo."
   - *"¿No pierde valor sin telefonía?"* → "El valor está en (1) cascada agéntica con `tool_choice: required`, (2) citation validator determinista 100% en bloques seguridad, (3) push multi-canal al cuidador, (4) PWA installable cero-fricción. Eso lo demostramos con audios pre-grabados igual de bien que en vivo — y mejor, porque la demo no crashea (J3.1)."
+
+### Bloque 7 — Pivote Lean MVP/PoC (N20, 2026-05-06)
+
+- **N20 Pivote Lean MVP/PoC.** "Algo funcional > algo arquitectónicamente correcto". Para el MVP/PoC del Lab el proyecto **NO usa Twilio (Voice ni SMS), Deepgram, base de datos (Supabase Postgres + pgvector + Storage), ni auth (magic link)**. Servidor stateless: el audio entra por multipart al endpoint `/api/audio/process`, vive como `Buffer` Node en memoria del request, pasa por ElevenLabs Scribe, atraviesa la cascada agéntica (Triage → Identity Verifier → Regulatory → Vishing → Notifier), y se descarta cuando el response retorna. Verdict + severity + citations validadas + tools_used + model_used **renderizados en pantalla** de la PWA (sin Web Push persistido, sin WhatsApp Cloud, sin SMS Twilio).
+
+  **Razones:**
+  1. La ventana de build ~20h hábiles + complejidad de Supabase migrations + RLS + magic link auth + Web Push VAPID + KYC Meta WhatsApp Cloud + SMS Twilio — todo eso son superficies de bug en el demo en vivo. El motor de detección no necesita nada de eso para validar M2/M3.
+  2. **Cero PII en reposo es la forma más fuerte de cumplimiento por diseño con Ley 21.719.** En MVP los derechos ARCO+ se cumplen trivialmente por ausencia de almacenamiento — no hay nada que acceder, rectificar, cancelar, oponer o portar.
+  3. El demo gana estabilidad (sin DB que migrar, sin auth que romperse, sin servicios externos persistidos = sin puntos de falla cross-network durante el pitch).
+  4. M3 (35% peso, primer desempate) **no se debilita** — la cascada Lean genera ~10-15 calls Claude por audio (Triage + Verifier + Regulatory + Vishing Opus + Notifier + tools), sostiene B3 sobradamente.
+  5. M2 se **fortalece** — A6 sigue intacto (post-validator HTTP no necesita DB) y A5 también (snapshot JSON estático con ≥7 fuentes oficiales + fetch HTTP en caliente sobre URLs canónicas para Levenshtein 0.95).
+
+  **Reformula:**
+  - **N9** Audio upload en PWA → **audio upload en PWA single-page sin auth + sin persistencia**. El Buffer Node se descarta tras response.
+  - **N10** Notificación legal de consentimiento via checkbox al subir audio + onboarding PWA → la marca **no se persiste**, se valida por request. One-party-consent satisfecho a nivel UX. V2 persiste la marca.
+  - **N11** Verdict + push severity al cuidador → **verdict + severity renderizados en pantalla de la PWA**, opcional `Notification` API in-page del browser. Sin push persistido en MVP.
+  - **N13** Política B per-contact configurable → política B aplicada **sobre `apps/web/data/demo-config.json` hardcoded para María**. Sin configuración por usuario en MVP. V2 = persistencia por cuidador.
+  - **N15** Excepción `always_pass` para 2-3 contactos críticos → aplicada sobre el config demo de María.
+
+  **Reemplaza:**
+  - **N17** Web Push API (primario) + WhatsApp Cloud API (HIGH risk) + SMS Twilio (fallback) → **render del verdict en pantalla** + opcional `Notification` API in-page. Web Push persistido + WhatsApp Cloud + SMS Twilio = **V2**.
+  - **N18** Supabase Auth magic link al email del cuidador → **sin auth ni login en MVP**. PWA single-page demo público. Magic link + multi-cuidador = **V2**.
+
+  **Hace obsoletas para MVP (vuelven activas en V2):**
+  - **Supabase Postgres + pgvector + Storage** → en MVP no hay tablas, signed URLs, ni TTL. Las fuentes regulatorias viven en `apps/web/data/sources/*.json` con quotes pre-extraídos manualmente. La config Identity Firewall vive en `apps/web/data/demo-config.json` hardcoded para María.
+  - **RAG vectorial Voyage `voyage-3` + pgvector** → en MVP la cita se construye con tool `tool-citation-fetch` que hace fetch HTTP directo sobre URLs de la allowlist canónica (bcn.cl, cmfchile.cl, sernac.cl, csirt.gob.cl, sii.cl, fintech.benditaia.cl, phishtank.org, urlhaus.abuse.ch). Las ~7 fuentes oficiales son finitas y conocidas; RAG vectorial aporta valor con corpus grande, no aquí. V2 cuando el corpus crezca (boletines diarios CMF/CSIRT/PDI, alertas Sernac dinámicas).
+  - **Endpoints ARCO+ (`/api/export`, `/api/account DELETE`)** → en MVP no hay datos persistidos que exportar/borrar. ARCO+ trivialmente cumplido por ausencia. V2 con DB activa.
+  - **Schema Supabase del §6** (`whitelists`, `shared_words`, `kba_questions`, `audio_uploads`, `call_sessions`) → en MVP esos esquemas son tipos TypeScript in-memory + el config demo en JSON commiteado. V2 los reactiva.
+  - **MFA WhatsApp para el cuidador** (mencionado en N18) → no aplica MVP.
+
+  **Intactas (sin cambios):** N1-N8 (con la reformulación que ya hizo N19), N12 (sigue obsoleta para MVP), N14 (PWA installable, no nativa), N16 (bias defensivo), N19 (audio-first), Bloque 1 (9.1-9.7) — el principio "no fetch de URLs desde backend" tiene una **excepción controlada N20**: el citation post-validator hace fetch HTTP solo sobre URLs de la allowlist canónica para verificación, no para ingestión de razonamiento. Sigue valiendo para el resto del backend.
+
+  **Threat model V1-V22 sin cambios.** Las defensas operan sobre el mismo modelo:
+  - V5 (inyección indirecta vía RAG) **se elimina trivialmente** en MVP por ausencia de RAG. En V2 cuando se introduzca pgvector: solo indexar fuentes oficiales.
+  - V12 (PII exfiltration) tiene **blast radius reducido** a la duración del request (sin PII en reposo).
+  - V13 (multi-turn jailbreak) sigue mitigado por single-turn por submission (cada request es una sesión).
+  - V15 (SSRF) sigue cubierto por allowlist de dominios + bloqueo de IPs privadas en el citation post-validator.
+
+  **Plan operativo:** ver `docs/PLAN.md` Anexo C para Capa Core Lean MVP (~12-15 ítems) y slash command `/ultraplan` para regenerar el plan en vivo leyendo el repo.
+
+  **Defensa Q&A para el pivote:**
+  - *"¿Por qué sin DB?"* → "MVP/PoC stateless deliberado. El motor de detección no necesita persistir nada para validar M2/M3. Cero PII en reposo es ventaja regulatoria, no carencia. La capa de cuentas + persistencia + cross-channel push se activa en V2. Para el demo del Lab, reduce blast radius del pitch en vivo."
+  - *"¿Por qué sin auth?"* → "El MVP es demo público para validar el motor frente al jurado. Auth + cuentas + multi-cuidador = V2 cuando haya cuidadores reales con datos sensibles."
+  - *"¿Cómo citan sin RAG?"* → "Las ~7 fuentes oficiales son finitas y conocidas. Snapshot JSON estático con quotes pre-extraídos + fetch HTTP en caliente para post-validator (substring + Levenshtein 0.95). RAG vectorial es optimización V2 cuando el corpus crezca."
+  - *"¿No baja la nota M3?"* → "No. La cascada Lean genera ~10-15 calls Claude por audio (Triage + Verifier + Regulatory + Vishing Opus + Notifier + tools). 5+ system prompts dedicados, ≥6 tools del SDK. M3 sostiene su peso intacto."
 
 ---
 
