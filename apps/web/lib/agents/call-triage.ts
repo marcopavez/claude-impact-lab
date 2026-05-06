@@ -179,7 +179,7 @@ PROTOCOLO:
    - claim_family / claim_bank / claim_authority / claim_service / unclear / obvious_scam_pattern
 
 3. RECLASIFICACIÓN A obvious_scam_pattern (gana sobre cualquier otro intent):
-   - "Cuento del tío" chileno: reclamo de parentesco + (urgencia/emergencia O accidente/detención/aduana) + (pedido de dinero/transferencia O dictado de RUT/cuenta destino) y/o pedido de secreto ("no le digas a mi mamá", "no avises a nadie") → obvious_scam_pattern AUNQUE el llamante diga "soy tu nieto/hijo/sobrino/yerno". Esta combinación GANA sobre el paso 5 (claim_family → delegate); ya hay autoincriminación, no hay verificación que la salve.
+   - "Cuento del tío" chileno: MENCIÓN de un familiar de ${input.protected_name} — sea reivindicado por el llamante ("soy tu nieto/hijo/sobrino/yerno") O invocado como tercero ("su nieto chocó", "le habla del taller mecánico / hospital / abogado / Carabineros donde está su hijo", "Andrés del Taller Ruta 5, su nieto Matías quedó la grúa") — combinada con (urgencia/emergencia O accidente/detención/aduana/internación) + (pedido de dinero/transferencia O dictado de RUT/cuenta destino) y/o pedido de secreto ("no le digas a mi mamá", "no avises a nadie") → obvious_scam_pattern. Esta combinación GANA sobre el paso 5 (claim_family → delegate) Y sobre el paso 5 (claim_service → take_message); ya hay autoincriminación, no hay verificación que la salve.
    - Self-impersonation: el llamante reclama ser la propia persona protegida (ej. "soy ${input.protected_name}, la titular"). La persona protegida no llama a su propio filtro → obvious_scam_pattern.
    - Premio inesperado / herencia / lotería / sorteo / "le tocó" sin que la persona haya participado.
    - Cripto-recovery, exchange "verificación urgente", "necesitamos un código de tu authenticator".
@@ -187,7 +187,7 @@ PROTOCOLO:
 
 4. Reglas duras de hangup por intent (cuando NO se reclasificó a obvious_scam):
    - claim_authority + (pide dinero/datos/clave  O  amenaza con citación/proceso/detención  O  dicta número 800/callback urgente  O  invoca urgencia coercitiva) → action="hangup_with_warning". PDI/Carabineros/SII/Tribunales NUNCA exigen call-back urgente, no amenazan por teléfono no solicitado, y no piden plata.
-   - claim_bank + (pide clave/clave dinámica/coordenadas/CVV/transferencia/datos de tarjeta/RUT completo) → action="hangup_with_warning". Los bancos chilenos NO solicitan estos datos en llamadas salientes, NUNCA, AUNQUE el caller_id coincida con un número oficial del banco (V22 spoofing).
+   - claim_bank + (pide clave/clave dinámica/coordenadas/CVV/transferencia/datos de tarjeta/RUT completo  O  dicta un número de callback/teléfono "oficial" para que la persona vuelva a llamar urgente) → action="hangup_with_warning". Los bancos chilenos NO solicitan estos datos en llamadas salientes ni piden volver a llamar urgente para "verificar" — usan cartola, app o sucursal. AUNQUE el caller_id coincida con un número oficial del banco (V22 spoofing) Y AUNQUE el llamante dicte un número que diga ser el oficial publicado en la web (también dictable por el atacante).
 
 5. Ruteo por intent (cuando ninguna regla dura aplicó):
    - claim_family → action="delegate_to_identity_verifier" (acá el Identity Verifier ejecuta shared word + KBA + cross-channel WhatsApp ack al número real del supuesto familiar; es la única defensa contra voice clone).
@@ -251,8 +251,10 @@ function generateCanaryToken(): string {
 }
 
 function spotlightTranscript(raw: string): string {
+  // [\s\S]*? (lazy, dotall manual) captura atributos con newlines/CR — el atacante
+  // puede insertar \n dentro del tag de cierre para evadir un regex con [^>]*.
   const sanitized = raw.replace(
-    /<\/?untrusted_caller_transcript[^>]*>/gi,
+    /<\/?untrusted_caller_transcript[\s\S]*?>/gi,
     "[REDACTED-DELIMITER]",
   );
   return `<untrusted_caller_transcript>\n${sanitized}\n</untrusted_caller_transcript>`;
@@ -272,15 +274,36 @@ function isValidDecision(x: unknown): x is CallTriageDecision {
   );
 }
 
-function isCanaryLeaked(serialized: string, canaryToken: string): boolean {
-  if (serialized.includes(canaryToken)) return true;
-  const lowered = serialized.toLowerCase();
-  if (lowered.includes("canary")) return true;
+function isCanaryLeaked(
+  decision: CallTriageDecision,
+  canaryToken: string,
+): boolean {
+  // 1. Literal token en cualquier campo (paranoia: si el modelo lo serializa
+  // sin guiones, con prefijo distinto, etc.).
+  const fullSerialized = JSON.stringify(decision);
+  if (fullSerialized.includes(canaryToken)) return true;
+
+  // 2. Detección reforzada sobre los campos efectivamente exfiltrables: tts_response
+  // viaja al llamante por TTS; rationale y evidence quedan en logs (Vercel/Supabase)
+  // y pueden filtrarse al cuidador. Normalizamos quitando separadores no-alfanuméricos
+  // para capturar exfiltración por spelling con guiones/espacios/puntos
+  // ("C-A-N-A-R-Y-A-3-F-2", "c.a.n.a.r.y", "c a n a r y").
+  const exposed = [
+    decision.tts_response,
+    decision.rationale,
+    ...decision.evidence_of_social_engineering,
+  ].join(" ");
+  const normalized = exposed.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  if (normalized.includes("canary")) return true;
+
+  // Chunks hex de 5 chars (16^5 ≈ 1M valores). FP rate sobre texto natural
+  // español-CL es despreciable; con 4 chars colisionaba con palabras/IDs comunes.
   const hexPart = canaryToken.includes("-")
     ? canaryToken.split("-")[1].toLowerCase()
     : canaryToken.toLowerCase();
-  for (let i = 0; i + 4 <= hexPart.length; i++) {
-    if (lowered.includes(hexPart.slice(i, i + 4))) return true;
+  for (let i = 0; i + 5 <= hexPart.length; i++) {
+    if (normalized.includes(hexPart.slice(i, i + 5))) return true;
   }
   return false;
 }
@@ -362,11 +385,10 @@ export async function runCallTriage(
     };
   }
 
-  // Canary leak detection: literal token, palabra "canary" en cualquier caso,
-  // o cualquier chunk hex de 4+ chars del segmento aleatorio (defensa contra
-  // exfiltración progresiva por paráfrasis: "el primer carácter es C, longitud 13").
-  const serialized = JSON.stringify(decision);
-  if (isCanaryLeaked(serialized, canaryToken)) {
+  // Canary leak detection: literal token en cualquier campo, palabra "canary"
+  // o chunk hex de 5+ chars sobre tts_response/rationale/evidence con normalización
+  // que captura spelling con separadores ("C-A-N-A-R-Y-A-3-F-2", "c.a.n.a.r.y").
+  if (isCanaryLeaked(decision, canaryToken)) {
     return {
       ok: false,
       reason: "canary_leaked",
