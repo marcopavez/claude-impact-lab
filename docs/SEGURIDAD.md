@@ -1190,7 +1190,7 @@ Si el llamante continúa hablando después de esa notificación → consentimien
 
 Ubicación: `packages/eval/golden/*.json` con schema `{id, input, expected: {verdict_in, must_cite_one_of, must_flag_si: bool}}`.
 
-## 31. Decisiones cerradas N1-N18
+## 31. Decisiones cerradas N1-N19
 
 Decisiones **confirmadas y son contrato del producto**. Cualquier cambio requiere actualizar este doc + memoria + revisión por pares.
 
@@ -1233,6 +1233,43 @@ Decisiones **confirmadas y son contrato del producto**. Cualquier cambio requier
 
 - **N17 Web Push API (primario) + WhatsApp Cloud API (redundante para HIGH risk) + SMS Twilio (fallback si Meta KYC tarda).**
 - **N18 Supabase Auth magic link** al email del cuidador. Sin password. JWT 7d con refresh rotativo. MFA WhatsApp roadmap.
+
+### Bloque 6 — Pivote audio-first MVP (N19, 2026-05-06)
+
+- **N19 Pivote audio-first MVP.** El MVP del Claude Impact Lab procesa **audios pre-grabados subidos en la PWA**, no llamadas en vivo. Stack MVP: **ElevenLabs Scribe v1** (STT batch, modelo `scribe_v1`) + **ElevenLabs TTS** (doble uso: generar los 3 audios demo + opcional verdict hablado). Sin Twilio Voice + Media Streams ni Deepgram en MVP. Phone-first vivo (call forwarding GSM `**21*<DID>#` + DID Twilio Chile + WebSocket bidireccional µ-law 8kHz + TwiML + Polly Lupe + whisper.cpp Fly.io) = **roadmap V2 explícito**.
+
+  **Razones:**
+  1. Ventana de build ~20h hábiles + KYC Twilio Chile incierto + complejidad WebSocket bidireccional µ-law son hostiles al timeline MVP.
+  2. Audio-first preserva todo el valor agéntico (cascada Triage → Identity Verifier → Regulatory Translator → Vishing Analyst Opus + citation validator + push al cuidador).
+  3. Demo radicalmente más estable (sin riesgo Twilio crash, sin riesgo Deepgram rate limit en vivo).
+  4. Marco tiene API key + suscripción ElevenLabs activa.
+
+  **Reformula:**
+  - **N1** Opción B (live screening) principal → **Opción A (post-call sobre audio pre-grabado) principal en MVP**, Opción B → V2.
+  - **N5** Llamada real con grabación + transcripción + alerta tiempo real → **Audio pre-grabado subido + transcripción + alerta post-procesamiento (~30s)** en MVP.
+  - **N11** Tres niveles HIGH→hangup, MEDIUM→message, LOW→transfer → **Verdict (`fraud`/`suspicious`/`legit`) + push severity (HIGH/MEDIUM/LOW)** en MVP. Acciones telefónicas (hangup/transfer) = V2.
+  - **N13** Política B (secretaria) per-contact configurable → **Política B se aplica en pre-clasificación del caller_id si está en metadata del audio**. Lógica equivalente, sin acción en vivo.
+
+  **Reemplaza:**
+  - **N2** Twilio Programmable Voice + Media Streams → **SIN telefonía MVP** (audios pre-grabados subidos a la PWA).
+  - **N3** Deepgram Nova-3 + whisper.cpp local fallback → **ElevenLabs Scribe v1 batch**.
+  - **N7** STT Deepgram default + whisper.cpp fallback → **STT ElevenLabs Scribe v1 batch.** Sin fallback declarado en MVP (cuota Marco suficiente).
+  - **N8** TTS Twilio Polly Lupe-Neural → **TTS ElevenLabs** (voz es-CL).
+  - **N9** Call forwarding GSM `**21*<DID>#` → **Audio upload en PWA** (drag-and-drop MP3/M4A/WAV ≤60s).
+
+  **Hace obsoleta:**
+  - **N12** Comprar DID Twilio Chile pre-ventana → **OBSOLETA** (no aplica MVP). N12 vuelve activa solo en V2.
+
+  **Traslada canal de:**
+  - **N10** Notificación legal de consentimiento — **se traslada de "primer TTS" a "checkbox obligatorio al subir audio + texto explícito en onboarding PWA"**. La intención (one-party-consent + notificación al llamante) se preserva; solo cambia el canal de notificación.
+
+  **Intactas (sin cambios):** N4, N6, N14, N15, N16, N17, N18 + Bloque 1 (9.1-9.7).
+
+  **Plan operativo:** ver `docs/PLAN.md` Anexo B para Capa Core revisada (~24h, 17 ítems) y slash command `/ultraplan` para regenerar el plan en vivo leyendo el repo.
+
+  **Defensa Q&A para el pivote:**
+  - *"¿Por qué no llamada en vivo?"* → "El motor de detección de vishing es el aporte central; en MVP lo validamos con audios pre-grabados sobre el golden set adversarial (35 casos, 100% bloques V21/V22/V17/V19). La capa de telefonía live (Twilio Voice + Media Streams + call forwarding GSM) está en el roadmap V2 con todos los detalles arquitectónicos en `docs/PLAN.md` cuerpo principal — es continuación inmediata, no replanteo."
+  - *"¿No pierde valor sin telefonía?"* → "El valor está en (1) cascada agéntica con `tool_choice: required`, (2) citation validator determinista 100% en bloques seguridad, (3) push multi-canal al cuidador, (4) PWA installable cero-fricción. Eso lo demostramos con audios pre-grabados igual de bien que en vivo — y mejor, porque la demo no crashea (J3.1)."
 
 ---
 

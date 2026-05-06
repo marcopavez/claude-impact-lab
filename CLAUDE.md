@@ -1,11 +1,11 @@
 # CLAUDE.md — Vigía (Claude Impact Lab 2026 · Chile)
 
 ## Misión
-Construir una **secretaria inteligente con firewall de identidad** que protege a adultos mayores chilenos contra estafas telefónicas. Funciona vía desvío de llamadas desde el celular real de la persona protegida hacia un DID Twilio chileno, donde Claude analiza la llamada en tiempo real, autentica al llamante con un protocolo multi-factor, y decide si transferir, tomar mensaje o colgar — alertando al cuidador familiar por una PWA.
+Construir un **detector de vishing con firewall de identidad** que protege a adultos mayores chilenos contra estafas telefónicas. **MVP audio-first (N19, 2026-05-06):** el cuidador o la persona protegida sube audios sospechosos en una PWA installable; Claude los analiza con una cascada agéntica (Call Triage → Identity Verifier → Regulatory Translator → Vishing Analyst Opus 4.7) y entrega verdict + citas regulatorias validadas + push al cuidador en ~30s. **Roadmap V2:** llamada en vivo con call forwarding GSM hacia DID Twilio Chile + Media Streams µ-law + decisión transfer/message/hangup en tiempo real.
 
-Track de competencia: **Línea 02 — Ciberseguridad Ciudadana**. Por diseño cruza Línea 01 (traduce regulación a lenguaje ciudadano con citas obligatorias) y Línea 03 (consentimiento legal de grabación incorporado al primer TTS, PII efímera con TTL 24h, derechos ARCO+ Ley 21.719 expuestos vía endpoints export/delete).
+Track de competencia: **Línea 02 — Ciberseguridad Ciudadana**. Por diseño cruza Línea 01 (traduce regulación a lenguaje ciudadano con citas obligatorias) y Línea 03 (consentimiento legal explícito vía checkbox al subir audio + texto en onboarding PWA, PII efímera con TTL 24h, derechos ARCO+ Ley 21.719 expuestos vía endpoints export/delete).
 
-**Estructura de docs (3 archivos):** concepto + ficha cívica + arquitectura + decisiones + privacidad en `docs/PROYECTO.md`. Plan operativo (capas Core/Sólido/Wow + tracks técnicos + fallbacks + sub-checks operativos + KPIs + Q&A) en `docs/PLAN.md`. Threat model + identity firewall + PWA cuidador + prompts canónicos + golden set + decisiones cerradas N1-N18 en `docs/SEGURIDAD.md`. Texto literal de bases, rúbrica y datasets oficiales en `docs/EVENT/` — autoridad para cualquier disputa interna. Resúmenes para onboarding del equipo (10 min) en `RESUMEN/`.
+**Estructura de docs (3 archivos):** concepto + ficha cívica + arquitectura + decisiones + privacidad en `docs/PROYECTO.md`. Plan operativo (capas Core/Sólido/Wow + tracks técnicos + fallbacks + sub-checks operativos + KPIs + Q&A) en `docs/PLAN.md` — **Anexo B contiene el plan operativo audio-first vigente; el cuerpo principal queda como roadmap V2 + contexto histórico**. Threat model + identity firewall + PWA cuidador + prompts canónicos + golden set + decisiones cerradas N1-N19 en `docs/SEGURIDAD.md`. Texto literal de bases, rúbrica y datasets oficiales en `docs/EVENT/` — autoridad para cualquier disputa interna. Resúmenes para onboarding del equipo (10 min) en `RESUMEN/`. Slash command `/ultraplan` (`.claude/commands/ultraplan.md`) regenera el plan en vivo leyendo el repo.
 
 ## Principios no negociables
 
@@ -14,7 +14,7 @@ Track de competencia: **Línea 02 — Ciberseguridad Ciudadana**. Por diseño cr
 3. **Cita o calla.** Toda afirmación regulatoria del agente cita fuente oficial (Wiki Legal Fintech, BCN Ley Fácil, CMF, Sernac, CSIRT, PDI Cibercrimen, SII) o responde literal *"no encontré fuente para esta consulta"*. El sub-check **A6 (sin alucinaciones)** es binario. Aplicamos `tool_choice: required` + schema `citations[]` minItems:1 + post-validator determinista (substring + Levenshtein 0.95 sobre fuente fetcheada). Detalle `SEGURIDAD.md` §7.
 4. **Deny-by-default en el firewall de identidad.** El llamante no toca a la persona protegida hasta ganarse el derecho. La transferencia es excepción, no default. Caller-ID solo NO basta — siempre exigir factor adicional (shared word/KBA + cross-channel ack). Detalle `SEGURIDAD.md` Parte II.
 5. **PII al mínimo y efímera.** No persistimos RUT, datos bancarios ni transcripts plain. Redacción determinista regex chileno antes del modelo, antes de logs, antes de embeddings. Audios TTL 24h con signed URLs. Diseñado desde día 1 alineado con Ley 21.719 (vigencia 1-dic-2026).
-6. **Consentimiento legal explícito.** El primer TTS de Vigía notifica al llamante: *"esta llamada está siendo analizada para protección"*. One-party-consent satisfecho + notificación al llamante.
+6. **Consentimiento legal explícito.** En MVP audio-first: checkbox obligatorio al subir audio (*"el llamante fue notificado de esta grabación o la grabación fue obtenida bajo one-party-consent"*) + texto en onboarding PWA. En V2 con telefonía: notificación legal en el primer TTS de Vigía (*"esta llamada está siendo analizada para protección"*).
 7. **Ventana de construcción sagrada.** Código de aplicación se commitea solo dentro de la ventana de build. Antes y después: solo planning docs en `docs/`. Sub-check **B3** exige consola Anthropic con ≥3 mensajes en ventana — primer call al API debe ocurrir el 6-mayo después de las 00:00, no antes.
 
 ## Stack (decidido, justificado)
@@ -24,24 +24,25 @@ Track de competencia: **Línea 02 — Ciberseguridad Ciudadana**. Por diseño cr
 | LLM motor | **Sonnet 4.6** (Call Triage, Identity Verifier, Phishing, Regulatory, Denuncia, Notifier) + **Opus 4.7 + extended thinking** (Vishing Analyst post-call) + **Haiku 4.5** (Classifier secundario) | Sonnet 4.6 latencia/costo óptimo para llamada en vivo (<2s p50). Opus 4.7 con extended thinking en post-call donde latencia 10-30s es aceptable y un FN es máximo costo. Haiku para clasificación trivial. Multi-modelo declarado = bonus M3. |
 | SDK | `@anthropic-ai/sdk` TypeScript | Mismo lenguaje frontend ↔ backend ↔ MCPs. Skill `claude-api` aplicable. |
 | Patrón agéntico | Cascada **Call Triage → Identity Verifier → Vishing Analyst** con `tool_choice` forzado por agente. **MCPs custom** como tools de primera clase. | M3 mide arquitectura agéntica; cascada Triage rápido + Analyst lento es defendible y auditable. |
-| Telefonía | **Twilio Programmable Voice + Media Streams** (DID Chile) | Único viable en sprint corta. Media Streams entrega audio µ-law 8kHz/20ms via WebSocket bidireccional, exactamente para latencia real-time. Call forwarding desde celular real de la víctima como mecanismo de adopción cero-instalación. SIM físico chileno no viable sin SIM gateway hardware (USD 200-500 + Asterisk). SIP trunk chileno como roadmap producción. |
-| STT | **Deepgram Nova-3 streaming** (default) + **whisper.cpp local** (fallback declarado en Fly.io con modelo `large-v3` MIT) | Deepgram: vendor neutro, latencia <300ms interim transcripts, español multi-acento incluyendo Chile, free tier USD 200. Si "solo Claude" se interpreta literal estricto, switch a whisper.cpp local — argumento "no llamamos a OpenAI, corremos pesos open en nuestra infra" definitivo. Cambio toma horas, no días. |
-| TTS | **Twilio Polly Lupe-Neural** (TwiML) con `<prosody rate="slow">` | Incluido en Twilio, integración trivial, español neutro chileno, dicción para audiencia 65+. Cartesia Sonic como upgrade si latencia molesta. |
+| Audio input MVP | **Audios pre-grabados subidos a la PWA** (drag-and-drop, MP3/M4A/WAV ≤60s). Twilio Voice + Media Streams = roadmap V2 | N19 (2026-05-06): el MVP no requiere telefonía. Cero infra telefónica, cero KYC DID Chile, cero WebSocket bidireccional. La cascada agéntica procesa el audio en ~30s y entrega verdict + push al cuidador. Phone-first vivo (call forwarding GSM + DID Twilio + Media Streams µ-law) defendido como V2 explícito. |
+| STT | **ElevenLabs Scribe v1** batch (modelo `scribe_v1`) | Marco tiene API key + suscripción. Latencia 5-15s para audio 60s — bajo el umbral J3.3 (<30s) sub-check. Español multi-acento incluyendo Chile. NO Deepgram, NO whisper.cpp en MVP (eran del plan phone-first; whisper.cpp queda V2 si hace falta). |
+| TTS | **ElevenLabs TTS** (voz es-CL) | Doble uso: (1) generar los 3 audios demo (cuento del tío / banco oficial / familiar legítimo, ≤60s c/u); (2) opcional reproducir verdict hablado en PWA para accesibilidad 65+. NO Twilio Polly (era plan phone-first). |
 | RAG | **pgvector sobre Postgres (Supabase)** | Estándar. Free tier suficiente. RLS por `caregiver_id`. |
 | Embeddings | **Voyage AI `voyage-3`** | Calidad alta para español, costo bajo, no acopla a otro LLM (mantiene Claude motor único). |
-| Canal de adopción | **Call forwarding desde celular real** de la persona protegida (código GSM `**21*<DID>#`) hacia DID Twilio chileno | Cero instalación, cero app a aprender, cero login para la persona protegida. Operadores chilenos (Movistar/Entel/WOM/VTR) lo soportan nativamente. La persona protegida deja de contestar; Vigía contesta por ella. |
+| Canal de adopción MVP | **Audio upload en PWA** (cuidador o persona protegida sube audio sospechoso recibido en su celular) | N19: cero instalación, cero KYC, cero hardware. La persona protegida deriva el audio al cuidador (WhatsApp/SMS) o lo sube directo a la PWA. **V2:** call forwarding GSM `**21*<DID>#` hacia DID Twilio Chile (operadores Movistar/Entel/WOM/VTR lo soportan nativamente). |
 | PWA cuidador | **Next.js 15 + React 19 + Tailwind + shadcn/ui + Supabase Auth (magic link) + Web Push API + manifest installable** | Distribución cero fricción. Add-to-Home-Screen indistinguible de app nativa. Detalle `docs/SEGURIDAD.md` Parte III. |
 | Push al cuidador | **Web Push API** (primario) + **WhatsApp Cloud API** (redundante para HIGH risk) + **SMS Twilio** (fallback si WhatsApp KYC tarda) | Web Push gratis y suficiente para LOW/MEDIUM. WhatsApp para HIGH risk porque siempre llega. SMS por si Meta KYC se atrasa. |
 | MCPs custom | `mcp-wiki-legal` + `mcp-cmf` (servidores standalone) | Sostiene narrativa "MCP custom" sin sobre-ingeniar. Phone-lookup, PhishTank, URLhaus, Twilio-call, WhatsApp-cc, Web-push, Denuncia-build = tools del SDK. |
-| Hosting | **Vercel** (PWA + edge functions) + **Supabase** (DB+Auth+Storage) + **Fly.io** (worker whisper.cpp si activamos fallback) | Free tier para todos. Deploy en minutos. Demos públicas accesibles. |
+| Hosting | **Vercel** (PWA + edge functions + route handlers `/api/*`) + **Supabase** (DB pgvector + Auth magic link + Storage para audios) | Free tier para todos. Deploy en minutos. Demos públicas accesibles. Fly.io worker whisper.cpp queda V2 si se activa fallback. |
 
 **Decisiones que NO tomamos (y por qué):**
+- **Twilio Voice + Media Streams en MVP** → N19: KYC DID Chile incierto + complejidad WebSocket µ-law bidireccional vs. ventana ~20h. Audio-first preserva el valor (cascada agéntica + citation validator + Vishing Opus + push) sin riesgo telefónico. **Roadmap V2 explícito.**
+- **Deepgram en MVP** → N19: ElevenLabs Scribe cubre el caso (batch sobre audio pre-grabado, no necesitamos streaming real-time). Marco tiene API key. Whisper.cpp/Deepgram = V2 si streaming live.
 - **App nativa Android/iOS** → costo de App Store review + builds nativos > beneficio MVP. PWA installable cumple. Roadmap V2.
 - **Voice cloning detection** → estado del arte cambiante, datos de referencia complejos. Defensa real para clonación = factor de conocimiento (KBA + shared word, no clonables) + cross-channel out-of-band. Eso ya está.
 - **SIM card chileno físico** → no viable sin SIM gateway hardware (USD 200-500 + Asterisk) en sprint 48h.
-- **Whisper de OpenAI** → conservador con la regla "Claude motor principal"; Deepgram es vendor neutro, whisper.cpp local como fallback open source MIT.
-- **Streaming bidireccional con interrupciones naturales** → MVP usa turn-by-turn simple. Manejar interrupciones requiere VAD bidireccional non-trivial.
-- **Captura de audio con app nativa Android** → out of scope; el audio viene por Twilio Media Streams en server.
+- **Whisper de OpenAI** → conservador con la regla "Claude motor principal"; ElevenLabs Scribe es vendor neutro y cumple para batch.
+- **Streaming bidireccional con interrupciones naturales** → no aplica MVP audio-first. V2 usaría turn-by-turn simple sobre Media Streams.
 - **LangChain/LangGraph** → abstracción especulativa que estorba el Q&A.
 - **GPT-4 / Gemini como motor** → **descalifica**.
 - **Embeddings de OpenAI** → acoplamiento innecesario; Voyage `voyage-3` cumple.
@@ -77,18 +78,18 @@ La rúbrica oficial está en `docs/EVENT/RUBRICA.md`. Score final = **40% mentor
 
 | Dim | Peso | Sub-check | Cómo lo cumplimos |
 |---|---|---|---|
-| M1 Problema y ciudadano | 20% | A1 sin jerga / A2 segmento / A3 canal / A4 impacto | Adultos mayores 65+ Chile (2.4M INE 2026), llamada con call forwarding, tiempo detección 72h → tiempo real durante la llamada. |
+| M1 Problema y ciudadano | 20% | A1 sin jerga / A2 segmento / A3 canal / A4 impacto | Adultos mayores 65+ Chile (2.4M INE 2026), **PWA installable + audio upload** (canal MVP), tiempo detección 72h → ~30s (procesamiento Scribe + cascada). |
 | M2 Datos responsables | 20% | A5 ≥2 fuentes / A6 sin alucinaciones | ≥7 fuentes oficiales (Wiki Legal Fintech, BCN Ley Fácil, CMF, Sernac, CSIRT, PDI, Subtel) + `tool_choice: required` + schema citations[] minItems:1 + post-validator determinista. |
-| M3 Uso de Claude + arquitectura agéntica | 35% | B1 system prompts / B2 ≥2 tools / B3 ≥3 mensajes consola | 6+ system prompts dedicados (`docs/SEGURIDAD.md` Parte IV); 2 MCPs custom + ≥8 tools SDK; pipeline phone-first genera decenas de calls por llamada. |
-| M4 Funciona | 25% | B4 demo end-to-end | Demo principal: llamada en vivo real con call forwarding + las 3 llamadas pre-validadas + PWA cuidador en pantalla. Backup pre-grabado sin transición visible. |
+| M3 Uso de Claude + arquitectura agéntica | 35% | B1 system prompts / B2 ≥2 tools / B3 ≥3 mensajes consola | 6+ system prompts dedicados (`docs/SEGURIDAD.md` Parte IV); 2 MCPs custom + ≥8 tools SDK; pipeline audio-first genera ~10-15 calls por audio (Triage + Verifier + Regulatory + Vishing Opus + Notifier + tools). |
+| M4 Funciona | 25% | B4 demo end-to-end | Demo principal: subida en vivo de los 3 audios pre-validados (cuento del tío, banco oficial, familiar legítimo) + cascada procesa + verdict + push al cuidador en pantalla. Demo ultra-estable (sin telefonía = sin riesgos KYC ni Twilio crash). |
 
 **Resumen Juez (12 sub-checks, si finalistas):**
 
 | Dim | Peso | Sub-checks | Cómo lo cumplimos |
 |---|---|---|---|
-| J1 Pitch | 35% | J1.1 ≤3 min · J1.2 ciudadano · J1.3 cita · J1.4 Q&A | María (78, Ñuñoa) → demo en vivo de cuento del tío bloqueado por el firewall → cita Ley 21.459 + Sernac. Q&A red team con foco en "¿qué pasa si el estafador dice ser la nieta?". |
-| J2 Impacto | 35% | J2.1 métrica · J2.2 alcanzable · J2.3 nuevo · J2.4 canal | 2.4M adultos mayores + cero instalación + B2NGO con SENAMA. Único filtro multi-factor de identidad para llamada en LATAM. Canal real: la llamada que ya recibe la víctima. |
-| J3 Demo en vivo | 30% | J3.1 no crashea · J3.2 I/O visible · J3.3 latencia · J3.4 Claude evidente | Backup video + 3 llamadas pre-validadas. PWA cuidador muestra transcript SSE + decisión por nivel + tools + modelo. p50 Triage <2s. |
+| J1 Pitch | 35% | J1.1 ≤3 min · J1.2 ciudadano · J1.3 cita · J1.4 Q&A | María (78, Ñuñoa) → demo en vivo: cuidador sube audio del cuento del tío a la PWA → cascada detecta vishing + cita Ley 21.459 + Sernac → push al cuidador. Q&A red team con foco en "¿qué pasa si el estafador dice ser la nieta?" + "¿por qué no en vivo?". |
+| J2 Impacto | 35% | J2.1 métrica · J2.2 alcanzable · J2.3 nuevo · J2.4 canal | 2.4M adultos mayores + cero instalación + B2NGO con SENAMA. Único motor de detección de vishing con citas regulatorias obligatorias en LATAM. Canal MVP: PWA + audio upload. **Roadmap V2 declarado:** llamada en vivo con call forwarding GSM. |
+| J3 Demo en vivo | 30% | J3.1 no crashea · J3.2 I/O visible · J3.3 latencia · J3.4 Claude evidente | Demo audio-first ultra-estable (sin Twilio = sin crash en vivo). PWA cuidador muestra transcript Scribe + decisión por nivel + tools invocadas + modelo (Sonnet/Opus/Haiku). Latencia E2E <30s para audio 60s. |
 
 **Selección:**
 - Top 4 por vertical → 12 finalistas (cron 7-mayo 09:00 sobre score_mentor).
@@ -98,7 +99,7 @@ La rúbrica oficial está en `docs/EVENT/RUBRICA.md`. Score final = **40% mentor
 
 ## Reglas críticas (descalificadores y penalizaciones)
 
-- **Claude motor principal.** Sin uso real verificado en consola Anthropic durante la ventana → descalificación. Otros LLMs como base → descalificados. Deepgram solo STT, Twilio Polly solo TTS, Voyage solo embeddings — todos componentes I/O sensoriales no-LLM.
+- **Claude motor principal.** Sin uso real verificado en consola Anthropic durante la ventana → descalificación. Otros LLMs como base → descalificados. **ElevenLabs Scribe solo STT, ElevenLabs TTS solo TTS, Voyage solo embeddings** — todos componentes I/O sensoriales no-LLM. Cero LLM-as-a-Service externo en cualquier capa de razonamiento.
 - **Construido en la ventana.** Código y consola Anthropic con mensajes fuera de la ventana no cuentan para B3.
 - **Cero re-identificación de datasets.** No intentar des-anonimizar PhishTank, URLhaus, CMF, Subtel.
 - **Cero plagio.** Toda decisión arquitectónica documentada y defendible en Q&A.
@@ -111,7 +112,7 @@ La rúbrica oficial está en `docs/EVENT/RUBRICA.md`. Score final = **40% mentor
 - No confirmar al llamante el resultado de su shared word (oracle attack).
 - No revelar al llamante si la persona protegida está en casa o disponible.
 - No persistir transcripts plain ni shared words/KBA en plain text.
-- No omitir la notificación legal de grabación al inicio del primer TTS.
+- No omitir la notificación legal de grabación: en MVP audio-first vía checkbox obligatorio al subir audio + texto en onboarding PWA; en V2 con telefonía vía primer TTS.
 - No agregar abstracciones especulativas; cada capa justifica su existencia.
 - No commitear secrets ni `.env`. Sí `.env.example`.
 - No `--amend` sobre commits compartidos.
@@ -148,15 +149,16 @@ La rúbrica oficial está en `docs/EVENT/RUBRICA.md`. Score final = **40% mentor
 
 ## Decisiones de seguridad cerradas
 
-Las decisiones N1–N18 están confirmadas y documentadas en `docs/SEGURIDAD.md` §31. Cualquier cambio requiere actualizar `SEGURIDAD.md` + memoria + revisión por pares. Resumen no exhaustivo:
+Las decisiones N1–N19 están confirmadas y documentadas en `docs/SEGURIDAD.md` §31. Cualquier cambio requiere actualizar `SEGURIDAD.md` + memoria + revisión por pares. Resumen no exhaustivo:
 
+- **N19 (2026-05-06) Pivote audio-first MVP.** Reformula N1/N5/N11/N13. Reemplaza N2 (Twilio Voice→sin telefonía MVP), N3/N7 (Deepgram→ElevenLabs Scribe), N8 (Polly→ElevenLabs TTS), N9 (call forwarding→audio upload PWA). Hace obsoleta N12. Traslada canal de N10 (consentimiento). Phone-first vivo es V2.
 - Política B (secretaria) por defecto + per-contact configurable (B/A/always_pass).
 - FP-permissive: ante duda, "trátalo como sospechoso".
-- Notificación legal de grabación en primer TTS.
-- 3 niveles de autonomía: HIGH→hangup, MEDIUM→message, LOW→transfer.
-- Multi-factor real para transfer: caller_id + (shared word OR KBA) + cross-channel ack. AND, no OR.
+- Consentimiento legal: checkbox al subir audio + texto en onboarding (V2 = primer TTS).
+- Verdict (`fraud`/`suspicious`/`legit`) + push severity (HIGH/MEDIUM/LOW). En V2 con telefonía: HIGH→hangup, MEDIUM→message, LOW→transfer.
+- Identity Firewall multi-factor: caller_id + (shared word OR KBA) + cross-channel ack. AND, no OR. En MVP: motor de detección + challenge plan recomendado al cuidador.
 - Bias defensivo explícito en Call Triage system prompt.
 - Sin voice cloning detection (out of scope).
-- PWA installable, no nativa. Supabase magic link auth.
-- STT Deepgram + whisper.cpp fallback. TTS Twilio Polly Lupe.
-- WhatsApp Cloud API redundante para alertas críticas.
+- PWA installable, no nativa. Supabase Auth magic link.
+- STT ElevenLabs Scribe + TTS ElevenLabs (Marco tiene API key + suscripción).
+- WhatsApp Cloud API redundante para alertas críticas + SMS Twilio fallback.
