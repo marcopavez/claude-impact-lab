@@ -7,7 +7,7 @@ Carpeta pensada para onboardear a un compañero en ~10 minutos. Cada archivo es 
 | `01-PROYECTO.md` | Qué es Vigía, a quién protege, por qué importa | Primera lectura. Para pitch y contexto. |
 | `02-ARQUITECTURA.md` | Stack, cascada de agentes, diagrama mínimo | Cuando vayas a tocar código o explicar el sistema. |
 | `03-SEGURIDAD.md` | Identity Firewall + threat model (vectores y defensas) | Antes de tocar prompts, tools o lógica de transferencia. |
-| `04-FLUJO-LLAMADA.md` | Qué pasa segundo a segundo cuando entra una llamada | Para entender la integración Twilio ↔ Deepgram ↔ Claude. |
+| `04-FLUJO-LLAMADA.md` | Qué pasa cuando entra un audio sospechoso (MVP audio-first) + roadmap V2 phone-first | Para entender el procesamiento end-to-end. |
 | `05-PRIVACIDAD.md` | PII, Ley 21.719, consentimiento, retención | Antes de loguear, persistir o exportar datos. |
 | `06-DECISIONES.md` | Qué elegimos y qué descartamos (con el porqué) | Cuando alguien pregunte "¿y por qué no usamos X?". |
 | `07-RUBRICA.md` | Cómo cada parte del sistema defiende la rúbrica del Lab | Para preparar demo y Q&A con jurado. |
@@ -18,7 +18,7 @@ Carpeta pensada para onboardear a un compañero en ~10 minutos. Cada archivo es 
 2. **Cita o calla.** Toda afirmación regulatoria con cita oficial validada o "no encontré fuente".
 3. **Deny-by-default en el firewall.** Caller-ID solo NO basta nunca. Siempre factor adicional para transferir.
 4. **PII al mínimo y efímera.** Redacción regex chilena → modelo → logs. Audios TTL 24h.
-5. **Consentimiento legal en el primer TTS.** *"Esta llamada está siendo analizada para protección"*.
+5. **Consentimiento legal explícito.** En MVP audio-first: checkbox al subir audio + texto en onboarding PWA. En V2 con telefonía: notificación en primer TTS *"esta llamada está siendo analizada para protección"*.
 6. **Ventana sagrada.** Código de aplicación solo dentro de la ventana 6-mayo. Antes y después: solo `docs/`.
 
 ## Documentos largos (fuente de verdad)
@@ -27,5 +27,5 @@ Los archivos de `RESUMEN/` son derivados. Si hay disputa, manda el doc largo:
 
 - `docs/PROYECTO.md` — concepto, ficha cívica, arquitectura, decisiones, privacidad.
 - `docs/PLAN.md` — capas Core/Sólido/Wow, tracks técnicos, fallbacks, sub-checks operativos, KPIs, Q&A.
-- `docs/SEGURIDAD.md` — threat model, Identity Firewall, PWA cuidador, prompts canónicos, golden set, decisiones cerradas N1–N18.
+- `docs/SEGURIDAD.md` — threat model, Identity Firewall, PWA cuidador, prompts canónicos, golden set, **decisiones cerradas N1–N19** (incluye N19 audio-first MVP).
 - `docs/EVENT/` — bases, rúbrica y datasets oficiales (autoridad final).

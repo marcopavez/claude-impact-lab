@@ -1,6 +1,8 @@
 # Vigía — proyecto
 
-> **Track de competencia:** Línea 02 — Ciberseguridad Ciudadana. Por diseño cruza Línea 01 (traduce regulación a lenguaje ciudadano con citas obligatorias) y Línea 03 (consentimiento legal de grabación incorporado al primer TTS, PII efímera con TTL 24h, derechos ARCO+ Ley 21.719 expuestos vía endpoints export/delete).
+> 🔄 **Pivote N19 (2026-05-06) audio-first MVP.** Este documento describe la arquitectura completa **incluyendo el roadmap V2 phone-first vivo** (Twilio Programmable Voice + Media Streams µ-law + call forwarding GSM + Deepgram + Polly Lupe-Neural). El **MVP del Lab es audio-first**: el cuidador o la persona protegida sube audios sospechosos a la PWA y Vigía los analiza con la cascada agéntica. Para el plan operativo MVP vigente ver `docs/PLAN.md` Anexo B; para decisiones cerradas N1-N19 ver `docs/SEGURIDAD.md §31`. Las secciones 9 a 14 (arquitectura técnica, flujo de llamada, schema) describen la visión completa V2 — son contexto histórico + roadmap, no la implementación MVP.
+
+> **Track de competencia:** Línea 02 — Ciberseguridad Ciudadana. Por diseño cruza Línea 01 (traduce regulación a lenguaje ciudadano con citas obligatorias) y Línea 03 (consentimiento legal explícito vía checkbox al subir audio + texto en onboarding PWA en MVP, primer TTS en V2; PII efímera con TTL 24h; derechos ARCO+ Ley 21.719 expuestos vía endpoints export/delete).
 >
 > **Doble función:** este documento es (a) la narrativa del proyecto y (b) la **ficha cívica oficial** que se submitirá según `docs/EVENT/BASES.md §4`. Las secciones 1 a 8 cumplen el formato exigido para los sub-checks A1–A5.
 
@@ -8,9 +10,9 @@
 
 ## Concepto en una frase
 
-**Vigía es una secretaria inteligente con firewall de identidad** que protege a adultos mayores chilenos contra estafas telefónicas. Funciona vía desvío de llamadas desde el celular real de la persona protegida hacia un DID Twilio chileno, donde Claude analiza la llamada en tiempo real, autentica al llamante con un protocolo multi-factor (caller_id + palabra clave familiar + KBA + verificación cruzada por WhatsApp), y decide si transferir, tomar mensaje o colgar — alertando al cuidador familiar por una PWA installable.
+**Vigía es un detector de vishing con firewall de identidad** que protege a adultos mayores chilenos contra estafas telefónicas. **MVP audio-first (N19, 2026-05-06):** el cuidador o la persona protegida sube un audio sospechoso a la PWA, Claude lo analiza con una cascada agéntica (Triage → Identity Verifier → Regulatory Translator → Vishing Analyst Opus 4.7), y entrega verdict + citas regulatorias validadas + push al cuidador en ~30s. **Roadmap V2:** funciona vía desvío de llamadas (`**21*<DID>#`) desde el celular real de la persona protegida hacia un DID Twilio chileno, donde Claude analiza la llamada en tiempo real, autentica al llamante con un protocolo multi-factor (caller_id + palabra clave familiar + KBA + verificación cruzada por WhatsApp), y decide si transferir, tomar mensaje o colgar.
 
-**Vigía baja el tiempo de detección de 72 horas a tiempo real.** El llamante nunca llega a la víctima si no pasa el firewall.
+**Vigía baja el tiempo de detección de 72 horas a ~30s** (MVP audio-first) o **a tiempo real** (V2 con telefonía). El llamante nunca llega a la víctima si no pasa el firewall.
 
 ---
 

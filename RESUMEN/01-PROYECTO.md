@@ -1,8 +1,10 @@
 # 01 — Qué es Vigía
 
+> 🔄 **Pivote N19 (2026-05-06):** el MVP es audio-first — el cuidador o la persona protegida sube audios sospechosos a la PWA y Vigía los analiza. La versión phone-first vivo (call forwarding GSM + Twilio Voice + decisión transfer/message/hangup en tiempo real) es **roadmap V2** explícito.
+
 ## Una frase
 
-**Secretaria inteligente con firewall de identidad** que protege a adultos mayores chilenos contra estafas telefónicas. La persona protegida activa desvío de llamadas (`**21*<DID>#`) hacia un número Twilio chileno, Vigía contesta, analiza la llamada en tiempo real con Claude, autentica al llamante con un protocolo multi-factor, y decide: **transferir, tomar mensaje o colgar** — alertando al cuidador familiar por una PWA.
+**Detector de vishing con firewall de identidad** que protege a adultos mayores chilenos contra estafas telefónicas. **MVP audio-first:** el cuidador o la persona protegida sube un audio sospechoso a la PWA, Claude lo analiza con una cascada agéntica (Triage → Identity Verifier → Regulatory Translator → Vishing Analyst Opus 4.7), entrega verdict + citas regulatorias validadas + push al cuidador en ~30s. **V2:** el desvío activado en el celular de la persona protegida (`**21*<DID>#`) hacia un número Twilio chileno hace que Vigía conteste en vivo, autentique al llamante y decida transferir, tomar mensaje o colgar.
 
 ## A quién protege
 
@@ -14,8 +16,8 @@
 
 - Estafas telefónicas son la categoría top de denuncias Sernac/PDI Cibercrimen en Chile. El "cuento del tío" mutó a vishing 2.0 (suplantación de bancos, Carabineros, SII, "tu nieto está detenido").
 - Cuando la víctima detecta el fraude, **ya transfirió**. Las alertas pasivas (CMF, banco) llegan tarde.
-- La base regulatoria está (Leyes 21.459 / 21.663 / 21.521 / 19.628 → 21.719). Falta la capa de IA que la traduzca a una respuesta accionable **durante** la llamada.
-- **Vigía baja el tiempo de detección de 72h a tiempo real.**
+- La base regulatoria está (Leyes 21.459 / 21.663 / 21.521 / 19.628 → 21.719). Falta la capa de IA que la traduzca a una respuesta accionable **sobre el audio del incidente** (MVP) o **durante la llamada** (V2).
+- **Vigía baja el tiempo de detección de 72h a ~30s** (MVP audio-first: STT + cascada + push al cuidador). En V2 con telefonía: tiempo real durante la llamada.
 
 ## Diferencial frente a lo existente
 
@@ -36,7 +38,7 @@
 ## Métricas de éxito
 
 - **100%** de llamadas con `policy ≠ always_pass` pasan por el firewall antes de transferir.
-- **Latencia p50 Triage en vivo:** < 2s desde fin de frase del llamante hasta TTS de Vigía.
+- **Latencia p50 Triage:** < 2s sobre transcript. **Latencia E2E (audio sube → push llega):** < 30s para audio 60s.
 - **100%** de cita en respuestas regulatorias (gate A6 binario).
 - **Cero falsos negativos** en el bloque V21 (suplantación social) del golden set.
 - **Tiempo de detección:** real-time (vs. 72h actuales post-fraude consumado).

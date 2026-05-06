@@ -8,7 +8,7 @@
 | **Ley 21.719** (nueva protección de datos) | **Vigencia 1-dic-2026** | ARCO+ (acceso, rectificación, cancelación, oposición, portabilidad), notificación de brechas <72h, DPO, base de licitud explícita. **Diseñamos para esta ley desde día 1.** |
 | **Ley 21.459** (delitos informáticos) | Vigente | Marco bajo el que clasificamos vishing/cuento del tío en respuestas regulatorias. |
 | **Ley 21.663** (ciberseguridad / ANCI) | Vigente | Plazos CSIRT 3h / 72h / 15d para reporte de incidentes. Aplica si Vigía sufre brecha. |
-| **One-party-consent** (jurisprudencia chilena) | Vigente | Permite grabar si una parte consiente. Vigía notifica al llamante en el primer TTS para reforzar. |
+| **One-party-consent** (jurisprudencia chilena) | Vigente | Permite grabar si una parte consiente. En MVP audio-first: el cuidador marca checkbox de consentimiento al subir el audio + texto en onboarding PWA. En V2 con telefonía: notificación en primer TTS para reforzar. |
 
 ## Principios de diseño
 
@@ -21,7 +21,7 @@
 
 ## Consentimiento legal
 
-- **Llamante**: notificado en el primer TTS — *"Esta llamada está siendo analizada para protección"*. Antes de cualquier procesamiento sensible.
+- **Llamante**: en MVP audio-first, el cuidador asume responsabilidad de notificar al llamante (one-party-consent) y marca checkbox al subir el audio. En V2 con telefonía: notificado por Vigía en el primer TTS — *"esta llamada está siendo analizada para protección"*. Antes de cualquier procesamiento sensible.
 - **Persona protegida (María)**: consentimiento informado en el onboarding del cuidador, registrado en la PWA.
 - **Cuidador**: ToS + privacy policy aceptados en alta. Magic link auth (Supabase) → no password leaks.
 
@@ -58,15 +58,16 @@ La PWA del cuidador expone endpoints:
 - **No reusamos PII** entre `caregiver_id` distintos. RLS de Supabase aplicado a todas las tablas sensibles.
 - **No enviamos PII a Anthropic más allá de lo estrictamente necesario** para la inferencia. Redacción regex se aplica antes.
 
-## Decisiones N1–N18 cerradas
+## Decisiones N1–N19 cerradas
 
-Las 18 decisiones de seguridad/privacidad están cerradas y documentadas en `docs/SEGURIDAD.md` (formato `9.1` a `9.18`). Cualquier cambio exige actualizar ese documento + memoria + revisión por pares. Resumen no exhaustivo:
+Las 19 decisiones de seguridad/privacidad están cerradas y documentadas en `docs/SEGURIDAD.md §31` Bloques 1-6. Cualquier cambio exige actualizar ese documento + memoria + revisión por pares. Resumen no exhaustivo:
 
+- **N19 (2026-05-06) Pivote audio-first MVP.** Reformula N1/N5/N11/N13. Reemplaza N2 (Twilio Voice→sin telefonía MVP), N3/N7 (Deepgram→ElevenLabs Scribe), N8 (Polly→ElevenLabs TTS), N9 (call forwarding→audio upload PWA). Hace obsoleta N12. Traslada canal de N10 (consentimiento).
 - Política B (secretaria) por defecto + per-contact configurable.
 - FP-permissive (ante duda, sospechoso).
-- Notificación legal de grabación en primer TTS.
-- 3 niveles de autonomía: HIGH→hangup, MEDIUM→message, LOW→transfer.
-- Multi-factor real para transfer: caller_id + (shared word OR KBA) + cross-channel ack (AND, no OR).
+- Consentimiento legal: checkbox al subir audio + onboarding PWA (V2: primer TTS).
+- Verdict (`fraud`/`suspicious`/`legit`) + push severity (HIGH/MEDIUM/LOW). V2 telefonía: HIGH→hangup, MEDIUM→message, LOW→transfer.
+- Multi-factor real para transfer (V2): caller_id + (shared word OR KBA) + cross-channel ack (AND, no OR). En MVP modo batch: motor de detección + challenge plan recomendado al cuidador.
 - Sin voice cloning detection (out of scope).
-- STT Deepgram + whisper.cpp local fallback.
-- WhatsApp Cloud API redundante para alertas críticas.
+- STT ElevenLabs Scribe v1 batch (MVP) / Deepgram + whisper.cpp fallback (V2).
+- WhatsApp Cloud API redundante para alertas críticas + SMS Twilio fallback.
