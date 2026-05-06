@@ -1,0 +1,56 @@
+{
+  "_comment": "Configuración demo de Vigía (MVP/PoC N20). Hardcoded para María, persona protegida del escenario de demo. Cargado in-memory por el Identity Verifier — NO persiste, NO sale del servidor. La configuración por cuidador real es V2 (con DB + auth).",
+  "_version": "1.0.0",
+  "protected_person": {
+    "first_name": "María",
+    "relationship_label": "abuelita"
+  },
+  "whitelist": [
+    {
+      "caller_id_e164": "+56987654321",
+      "display_name": "Pedro",
+      "relationship": "nieto",
+      "policy": "pass_after_verification",
+      "shared_word_required": true,
+      "cross_channel_phone_e164": "+56987654321"
+    },
+    {
+      "caller_id_e164": "+56912345678",
+      "display_name": "Carla",
+      "relationship": "hija",
+      "policy": "always_pass",
+      "shared_word_required": true,
+      "cross_channel_phone_e164": "+56912345678"
+    },
+    {
+      "caller_id_e164": "+56222555888",
+      "display_name": "Centro Médico San Borja",
+      "relationship": "servicio_salud",
+      "policy": "take_message_only",
+      "shared_word_required": false,
+      "cross_channel_phone_e164": null
+    }
+  ],
+  "shared_word": {
+    "_comment": "Palabra clave familiar acordada en persona, no por canal digital. Comparación normalizada: lowercase + NFKC + strip diacritics.",
+    "value_normalized": "manzanita",
+    "hint_for_cuidador": "Fruta favorita de la abuela María (en diminutivo)"
+  },
+  "kba_questions": [
+    {
+      "id": "kba-1",
+      "question": "¿Cómo se llama la mascota que tuvo María entre 2010 y 2018?",
+      "expected_answer_normalized": "pelusa"
+    },
+    {
+      "id": "kba-2",
+      "question": "¿En qué comuna vivió María cuando nació su primer nieto?",
+      "expected_answer_normalized": "nunoa"
+    },
+    {
+      "id": "kba-3",
+      "question": "¿Cuál era el oficio del marido de María (fallecido en 2019)?",
+      "expected_answer_normalized": "carpintero"
+    }
+  ]
+}

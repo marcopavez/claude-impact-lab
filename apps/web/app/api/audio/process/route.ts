@@ -1,16 +1,22 @@
 // POST /api/audio/process — pipeline audio-first stateless (N20).
 // Recibe multipart con un audio del llamante, lo transcribe (ElevenLabs Scribe v1),
-// redacta PII determinísticamente, y delega al Call Triage. Sin DB, sin auth,
-// sin storage: el buffer del audio vive solo durante el request.
+// redacta PII determinísticamente, y ejecuta la cascada agéntica completa:
+// Call Triage → (Identity Verifier) → (Vishing Analyst) → (Regulatory Translator) → Caregiver Notifier.
+// Sin DB, sin auth, sin storage: el buffer del audio vive solo durante el request.
 //
 // Contrato canónico: lib/api/audio-process.types.ts
 // Sub-checks: A3 (canal audio upload), B2 (Scribe + Triage tools), B3 (mensajes
-// consola en ventana), B4 (demo end-to-end), J3.3 (latencia <30s).
+// consola en ventana), B4 (demo end-to-end), J3.3 (latencia <30s), M3 cascada.
 
 import { randomUUID } from "node:crypto";
 
 import { runCallTriage } from "@/lib/agents/call-triage";
+import { runCaregiverNotifier } from "@/lib/agents/caregiver-notifier";
+import { runIdentityVerifier } from "@/lib/agents/identity-verifier";
+import { runRegulatoryTranslator } from "@/lib/agents/regulatory-translator";
+import { runVishingAnalyst } from "@/lib/agents/vishing-analyst";
 import { transcribeAudio } from "@/lib/clients/elevenlabs";
+import { httpSourceFetcher } from "@/lib/clients/source-fetcher";
 import { redact } from "@/lib/validators/pii";
 import {
   AUDIO_PROCESS_LIMITS,
@@ -18,9 +24,29 @@ import {
   type AudioProcessError,
   type AudioProcessErrorCode,
   type AudioProcessSuccess,
+  type CascadeStatuses,
+  type LatencyBreakdown,
   type PiiRedactionSummary,
 } from "@/lib/api/audio-process.types";
+import type {
+  CaregiverNotifierDecision,
+  CaregiverNotifierResult,
+} from "@/lib/agents/caregiver-notifier";
+import type {
+  IdentityVerifierDecision,
+  IdentityVerifierResult,
+} from "@/lib/agents/identity-verifier";
+import type {
+  RegulatoryTranslatorDecision,
+  RegulatoryTranslatorResult,
+} from "@/lib/agents/regulatory-translator";
+import type {
+  VishingAnalystDecision,
+  VishingAnalystResult,
+} from "@/lib/agents/vishing-analyst";
 import type { PiiKind } from "@/lib/validators/pii";
+
+import demoConfig from "@/data/demo-config.json";
 
 export const runtime = "nodejs"; // Node SDK (Anthropic + ElevenLabs) — no Edge.
 export const dynamic = "force-dynamic";
@@ -162,14 +188,30 @@ export async function POST(request: Request): Promise<Response> {
   const redactElapsed = Date.now() - redactStartedAt;
   const piiSummary = summarizePii(piiResult.hits);
 
-  // ----- 7. Call Triage -----
+  // Match del callerId contra la whitelist demo-config. En MVP, el cuidador del demo
+  // ingresa el callerId del audio (o se usa default) y el config hardcoded responde
+  // si está en whitelist o no.
+  const whitelistEntry =
+    demoConfig.whitelist.find((e) => e.caller_id_e164 === callerId) ?? null;
+  const callerInWhitelist = whitelistEntry !== null;
+
+  // ----- 7. Call Triage (eslabón 1) -----
   const triageStartedAt = Date.now();
   let triageResult: Awaited<ReturnType<typeof runCallTriage>>;
   try {
     triageResult = await runCallTriage({
       caller_id: callerId,
-      caller_in_whitelist: false, // Sin DB en MVP — el demo público no tiene whitelist.
-      whitelist_entry: null,
+      caller_in_whitelist: callerInWhitelist,
+      whitelist_entry: whitelistEntry
+        ? {
+            policy: whitelistEntry.policy as
+              | "always_pass"
+              | "pass_after_verification"
+              | "take_message_only",
+            display_name: whitelistEntry.display_name ?? undefined,
+            relationship: whitelistEntry.relationship ?? undefined,
+          }
+        : null,
       protected_name: protectedName,
       caller_transcript: piiResult.redacted,
     });
@@ -184,31 +226,274 @@ export async function POST(request: Request): Promise<Response> {
   }
   const triageElapsed = Date.now() - triageStartedAt;
 
-  const decision = triageResult.ok
+  const triageDecision = triageResult.ok
     ? triageResult.decision
     : triageResult.fallback_decision;
-  const failReason = triageResult.ok ? undefined : triageResult.reason;
-  const canaryPresent = triageResult.ok
+  const triageFailReason = triageResult.ok ? undefined : triageResult.reason;
+
+  const cascadeStatuses: CascadeStatuses = {
+    triage: triageResult.ok
+      ? { ok: true }
+      : { ok: false, reason: triageResult.reason, fell_back: true },
+  };
+  const modelsUsed: string[] = ["elevenlabs/scribe_v1", "claude-sonnet-4-6"];
+  const toolsUsed: string[] = [
+    "elevenlabs.speechToText",
+    "claude.tool_use:decide_action",
+  ];
+  let canaryPresent = triageResult.ok
     ? triageResult.decision.canary_present
     : triageResult.reason === "canary_leaked";
 
-  // ----- 8. Build success response -----
+  // ----- 8. Identity Verifier (eslabón 2 — solo si Triage delegó) -----
+  let identityDecision: IdentityVerifierDecision | undefined;
+  let identityElapsed: number | undefined;
+  if (triageDecision.action === "delegate_to_identity_verifier") {
+    const idStart = Date.now();
+    let idResult: IdentityVerifierResult;
+    try {
+      idResult = await runIdentityVerifier({
+        caller_id: callerId,
+        whitelist_entry: whitelistEntry
+          ? {
+              policy: whitelistEntry.policy as
+                | "always_pass"
+                | "pass_after_verification"
+                | "take_message_only",
+              display_name: whitelistEntry.display_name ?? undefined,
+              relationship: whitelistEntry.relationship ?? undefined,
+            }
+          : null,
+        protected_name: protectedName,
+        caller_transcript: piiResult.redacted,
+        demo_config: {
+          shared_word: demoConfig.shared_word,
+          kba_questions: demoConfig.kba_questions,
+        },
+      });
+    } catch {
+      idResult = {
+        ok: false,
+        reason: "model_error",
+        fallback_decision: {
+          shared_word_status: "not_attempted",
+          kba_status: "not_attempted",
+          cross_channel_recommended: true,
+          evasion_detected: false,
+          outcome: "take_message",
+          tts_response_to_caller:
+            "No puedo continuar la verificación en este momento.",
+          challenge_plan_for_cuidador:
+            "Verificación inconclusa por error técnico. No transfieras esta llamada.",
+          rationale: "Fail-safe por error de red en Identity Verifier.",
+          canary_present: false,
+        },
+        canary_token: "",
+        latency_ms: Date.now() - idStart,
+      };
+    }
+    identityElapsed = Date.now() - idStart;
+    identityDecision = idResult.ok ? idResult.decision : idResult.fallback_decision;
+    cascadeStatuses.identity = idResult.ok
+      ? { ok: true }
+      : { ok: false, reason: idResult.reason, fell_back: true };
+    modelsUsed.push("claude-sonnet-4-6:identity");
+    toolsUsed.push("claude.tool_use:decide_verification_outcome");
+    if (!canaryPresent && idResult.ok && idResult.decision.canary_present) {
+      canaryPresent = true;
+    }
+    if (!canaryPresent && !idResult.ok && idResult.reason === "canary_leaked") {
+      canaryPresent = true;
+    }
+  }
+
+  // ----- 9. Vishing Analyst (eslabón 3 — Opus 4.7 + extended thinking) -----
+  // Trigger: cualquier action distinta de "ask_clarifying_question" + "transfer_now".
+  // Esto cubre hangup_with_warning, lookup_cmf, take_message, delegate_to_identity.
+  // El analista decide después si verdict="legit" cuando no hay patrones.
+  const shouldRunVishing =
+    triageDecision.action !== "ask_clarifying_question" &&
+    triageDecision.action !== "transfer_now";
+
+  let vishingDecision: VishingAnalystDecision | undefined;
+  let vishingElapsed: number | undefined;
+  if (shouldRunVishing) {
+    const vStart = Date.now();
+    let vResult: VishingAnalystResult;
+    try {
+      vResult = await runVishingAnalyst({
+        protected_name: protectedName,
+        caller_transcript_redacted: piiResult.redacted,
+        triage_decision: triageDecision,
+        identity_decision: identityDecision,
+      });
+    } catch {
+      vResult = {
+        ok: false,
+        reason: "model_error",
+        fallback_decision: {
+          verdict: "suspicious",
+          verdict_kind: "behavioral",
+          confidence: 0,
+          patterns_detected: ["none"],
+          claimed_entity: null,
+          rationale_es:
+            "Análisis profundo no completado por error técnico. Tratamos la llamada como sospechosa.",
+          evidence_of_social_engineering: ["fail_safe_triggered"],
+          regulatory_questions_es: [],
+          next_steps_es:
+            "No devuelvas el llamado al número desconocido. Si te pidieron datos, denunciá a Sernac y PDI Cibercrimen.",
+          thinking_summary:
+            "Análisis profundo no ejecutado. Default conservador hasta verificación humana.",
+          canary_present: false,
+        },
+        canary_token: "",
+        latency_ms: Date.now() - vStart,
+      };
+    }
+    vishingElapsed = Date.now() - vStart;
+    vishingDecision = vResult.ok ? vResult.decision : vResult.fallback_decision;
+    cascadeStatuses.vishing = vResult.ok
+      ? { ok: true }
+      : { ok: false, reason: vResult.reason, fell_back: true };
+    modelsUsed.push("claude-opus-4-7+thinking");
+    toolsUsed.push("claude.tool_use:submit_analysis");
+    if (!canaryPresent && vResult.ok && vResult.decision.canary_present) {
+      canaryPresent = true;
+    }
+    if (!canaryPresent && !vResult.ok && vResult.reason === "canary_leaked") {
+      canaryPresent = true;
+    }
+  }
+
+  // ----- 10. Regulatory Translator (eslabón 4 — solo si Vishing pidió citas) -----
+  // En MVP corremos solo la PRIMERA pregunta para mantener latencia bajo 30s budget.
+  // Futuras iteraciones pueden encadenar todas con paralelismo.
+  let regulatoryDecision: RegulatoryTranslatorDecision | undefined;
+  let regulatoryElapsed: number | undefined;
+  const firstRegQuestion =
+    vishingDecision?.regulatory_questions_es?.[0]?.trim() ?? "";
+  if (firstRegQuestion.length > 0) {
+    const rStart = Date.now();
+    let rResult: RegulatoryTranslatorResult;
+    try {
+      rResult = await runRegulatoryTranslator(
+        {
+          question_es: firstRegQuestion,
+          context_transcript: piiResult.redacted,
+        },
+        { fetchSource: httpSourceFetcher },
+      );
+    } catch {
+      rResult = {
+        ok: false,
+        reason: "model_error",
+        fallback_decision: {
+          translation_es: "no encontré fuente para esta consulta",
+          citations: [],
+          cite_or_silent: true,
+          rationale: "Fail-safe regulatory por error de red.",
+        },
+        latency_ms: Date.now() - rStart,
+        retries: 0,
+      };
+    }
+    regulatoryElapsed = Date.now() - rStart;
+    regulatoryDecision = rResult.ok
+      ? rResult.decision
+      : rResult.fallback_decision;
+    cascadeStatuses.regulatory = rResult.ok
+      ? { ok: true }
+      : { ok: false, reason: rResult.reason, fell_back: true };
+    modelsUsed.push("claude-sonnet-4-6:regulatory");
+    toolsUsed.push("claude.tool_use:translate_with_citations");
+    toolsUsed.push("http.fetchSource");
+  }
+
+  // ----- 11. Caregiver Notifier (eslabón 5 — siempre que Triage haya devuelto algo) -----
+  let notifierDecision: CaregiverNotifierDecision | undefined;
+  let notifierElapsed: number | undefined;
+  {
+    const nStart = Date.now();
+    let nResult: CaregiverNotifierResult;
+    try {
+      nResult = await runCaregiverNotifier({
+        protected_name: protectedName,
+        triage_decision: triageDecision,
+        identity_decision: identityDecision,
+        vishing_decision: vishingDecision,
+        regulatory_decision: regulatoryDecision,
+      });
+    } catch {
+      nResult = {
+        ok: false,
+        reason: "model_error",
+        fallback_decision: {
+          severity: "MEDIUM",
+          headline: "Mensaje guardado — verificación pendiente",
+          summary:
+            "El análisis se completó parcialmente. Por seguridad tratamos la llamada como sospechosa.",
+          first_action:
+            "No devuelvas el llamado al número desconocido. Si era importante, llamá vos al número oficial.",
+          secondary_actions: [],
+          regulatory_note: "",
+          push_title: "Vigía: revisá el mensaje",
+          push_body: "Análisis parcial. Llamá vos al número oficial.",
+          canary_present: false,
+        },
+        canary_token: "",
+        latency_ms: Date.now() - nStart,
+      };
+    }
+    notifierElapsed = Date.now() - nStart;
+    notifierDecision = nResult.ok ? nResult.decision : nResult.fallback_decision;
+    cascadeStatuses.notifier = nResult.ok
+      ? { ok: true }
+      : { ok: false, reason: nResult.reason, fell_back: true };
+    modelsUsed.push("claude-sonnet-4-6:notifier");
+    toolsUsed.push("claude.tool_use:submit_notification");
+    if (!canaryPresent && nResult.ok && nResult.decision.canary_present) {
+      canaryPresent = true;
+    }
+    if (!canaryPresent && !nResult.ok && nResult.reason === "canary_leaked") {
+      canaryPresent = true;
+    }
+  }
+
+  // ----- 12. Build success response -----
+  const latency: LatencyBreakdown = {
+    stt_ms: sttElapsed,
+    pii_redact_ms: redactElapsed,
+    triage_ms: triageElapsed,
+    ...(typeof identityElapsed === "number" && {
+      identity_ms: identityElapsed,
+    }),
+    ...(typeof vishingElapsed === "number" && { vishing_ms: vishingElapsed }),
+    ...(typeof regulatoryElapsed === "number" && {
+      regulatory_ms: regulatoryElapsed,
+    }),
+    ...(typeof notifierElapsed === "number" && {
+      notifier_ms: notifierElapsed,
+    }),
+    total_ms: Date.now() - totalStartedAt,
+  };
+
   const success: AudioProcessSuccess = {
     ok: true,
     audio_id: randomUUID(),
     transcript_redacted: piiResult.redacted,
     pii_summary: piiSummary,
-    decision,
-    models_used: ["elevenlabs/scribe_v1", "claude-sonnet-4-6"],
-    tools_used: ["elevenlabs.speechToText", "claude.tool_use:decide_action"],
-    latency_ms: {
-      stt_ms: sttElapsed,
-      pii_redact_ms: redactElapsed,
-      triage_ms: triageElapsed,
-      total_ms: Date.now() - totalStartedAt,
-    },
+    decision: triageDecision,
+    ...(identityDecision && { identity_check: identityDecision }),
+    ...(vishingDecision && { vishing_analysis: vishingDecision }),
+    ...(regulatoryDecision && { regulatory: regulatoryDecision }),
+    ...(notifierDecision && { caregiver_message: notifierDecision }),
+    cascade_statuses: cascadeStatuses,
+    models_used: modelsUsed,
+    tools_used: toolsUsed,
+    latency_ms: latency,
     canary_present: canaryPresent,
-    ...(failReason && { fail_reason: failReason }),
+    ...(triageFailReason && { fail_reason: triageFailReason }),
   };
 
   return Response.json(success, { status: 200 });

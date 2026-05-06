@@ -116,12 +116,37 @@ export function mockAudioProcessResponse(
   const transcript = MOCK_TRANSCRIPTS[scenario];
   const piiSummary = MOCK_PII_SUMMARY[scenario];
 
+  // Notifier mock — solo para 'scam' demostramos la cascada completa con
+  // caregiver_message + first_action + secondary_actions. El resto cae a Triage simple.
+  const notifierMock =
+    scenario === "scam"
+      ? {
+          severity: "HIGH" as const,
+          headline: "Llamada bloqueada — patrón de estafa detectado",
+          summary:
+            "Vigía detectó el cuento del tío chileno: emergencia familiar inventada + pedido urgente de dinero + cuenta destino dictada. La llamada quedó bloqueada.",
+          first_action:
+            "No devuelvas el llamado al número desconocido. Llamá vos al número del nieto que ya tenés agendado.",
+          secondary_actions: [
+            "Si entregaste algún dato bancario, denunciá a Sernac (sernac.cl) y a PDI Cibercrimen.",
+            "Avisá al resto de la familia: el patrón se repite con varios adultos mayores en Chile.",
+          ],
+          regulatory_note: "",
+          push_title: "Vigía: llamada bloqueada",
+          push_body:
+            "Detectamos cuento del tío. NO devuelvas el llamado al número desconocido.",
+          canary_present: false,
+        }
+      : undefined;
+
   return {
     ok: true,
     audio_id: cryptoRandomId(),
     transcript_redacted: transcript,
     pii_summary: piiSummary,
     decision,
+    ...(notifierMock && { caregiver_message: notifierMock }),
+    cascade_statuses: { triage: { ok: true } },
     models_used: ["claude-sonnet-4-6"],
     tools_used: [
       "elevenlabs.scribe_v1",

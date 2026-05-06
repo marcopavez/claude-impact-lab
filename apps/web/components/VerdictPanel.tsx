@@ -9,11 +9,15 @@
 //     accesibilidad gratis (Tab + Enter/Space), sin JS extra.
 //   - Botón "Analizar otro audio" para reset hace foco-trap implícito vía onReset.
 
-import type { AudioProcessSuccess } from "../lib/api/audio-process.types";
+import type {
+  AudioProcessSuccess,
+  UiBadgeSeverity,
+} from "../lib/api/audio-process.types";
 import {
   ACTION_DESCRIPTION_ES,
   ACTION_LABEL_ES,
   badgeSeverityForAction,
+  badgeSeverityForResponse,
 } from "../lib/api/audio-process.types";
 import { PoweredByClaudeBadge } from "./PoweredByClaudeBadge";
 
@@ -23,7 +27,7 @@ type Props = {
 };
 
 const SEVERITY_STYLES: Record<
-  ReturnType<typeof badgeSeverityForAction>,
+  UiBadgeSeverity,
   { bg: string; fg: string; border: string; ariaPrefix: string }
 > = {
   danger: {
@@ -113,10 +117,19 @@ function renderTranscript(transcript: string): React.ReactNode {
 }
 
 export function VerdictPanel({ result, onReset }: Props) {
-  const severity = badgeSeverityForAction(result.decision.action);
+  const severity = badgeSeverityForResponse(result);
   const sty = SEVERITY_STYLES[severity];
-  const label = ACTION_LABEL_ES[result.decision.action];
-  const description = ACTION_DESCRIPTION_ES[result.decision.action];
+
+  // Headline + descripción canónica vienen del Notifier cuando está disponible.
+  // Si la cascada se cortó en Triage, caemos al mapping clásico de action.
+  const headline =
+    result.caregiver_message?.headline ??
+    ACTION_LABEL_ES[result.decision.action];
+  const description =
+    result.caregiver_message?.summary ??
+    ACTION_DESCRIPTION_ES[result.decision.action];
+  const triageLabel = ACTION_LABEL_ES[result.decision.action];
+  const triageBadgeSty = SEVERITY_STYLES[badgeSeverityForAction(result.decision.action)];
 
   const totalSeconds = (result.latency_ms.total_ms / 1000).toFixed(1);
   const primaryModel = result.models_used[0] ?? "claude-sonnet-4-6";
@@ -143,9 +156,9 @@ export function VerdictPanel({ result, onReset }: Props) {
             color: sty.fg,
             border: `2px solid ${sty.border}`,
           }}
-          aria-label={`${sty.ariaPrefix} ${label}`}
+          aria-label={`${sty.ariaPrefix} ${headline}`}
         >
-          {label}
+          {headline}
         </div>
         <h2
           id="verdict-title"
@@ -157,6 +170,52 @@ export function VerdictPanel({ result, onReset }: Props) {
           <PoweredByClaudeBadge model={primaryModel} size="sm" />
         </div>
       </header>
+
+      {/* ================== Acción primaria del cuidador ================== */}
+      {result.caregiver_message ? (
+        <section
+          aria-labelledby="caregiver-action-heading"
+          className="rounded-md border-2 p-4 flex flex-col gap-3"
+          style={{
+            borderColor: sty.border,
+            background: "var(--color-surface-2)",
+          }}
+        >
+          <h3
+            id="caregiver-action-heading"
+            className="text-lg font-semibold text-[color:var(--color-text)]"
+          >
+            Lo primero que tenés que hacer
+          </h3>
+          <p className="text-lg leading-relaxed text-[color:var(--color-text)] font-medium">
+            {result.caregiver_message.first_action}
+          </p>
+          {result.caregiver_message.secondary_actions.length > 0 ? (
+            <div>
+              <p className="text-sm font-semibold text-[color:var(--color-text-muted)] mb-1">
+                Y después:
+              </p>
+              <ul className="list-disc pl-6 flex flex-col gap-1 text-[color:var(--color-text)]">
+                {result.caregiver_message.secondary_actions.map((a, i) => (
+                  <li key={i} className="leading-relaxed">
+                    {a}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {result.caregiver_message.regulatory_note.length > 0 ? (
+            <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-3)] p-3">
+              <p className="text-sm font-semibold text-[color:var(--color-text-muted)] mb-1">
+                Lo que dice la ley chilena:
+              </p>
+              <p className="text-[color:var(--color-text)] leading-relaxed">
+                {result.caregiver_message.regulatory_note}
+              </p>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       {/* ================== Transcripción ================== */}
       <section aria-labelledby="transcript-heading" className="flex flex-col gap-2">
@@ -188,17 +247,142 @@ export function VerdictPanel({ result, onReset }: Props) {
         )}
       </section>
 
-      {/* ================== Razonamiento (colapsable) ================== */}
+      {/* ================== Análisis profundo (Vishing Analyst) ================== */}
+      {result.vishing_analysis ? (
+        <details
+          className="surface-card border-0 bg-[var(--color-surface-2)] p-4"
+          open
+        >
+          <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base focus-visible:outline-2">
+            Análisis profundo de la llamada
+            <span className="ml-2 inline-block px-2 py-0.5 rounded text-xs font-mono bg-[var(--color-surface-3)] text-[color:var(--color-text-muted)]">
+              {result.vishing_analysis.verdict}
+            </span>
+          </summary>
+          <div className="mt-3 flex flex-col gap-3 text-[color:var(--color-text)]">
+            <p className="leading-relaxed">
+              {result.vishing_analysis.thinking_summary}
+            </p>
+            <p className="leading-relaxed">
+              {result.vishing_analysis.rationale_es}
+            </p>
+            {result.vishing_analysis.patterns_detected.length > 0 &&
+            result.vishing_analysis.patterns_detected[0] !== "none" ? (
+              <div>
+                <p className="font-semibold mb-1">Patrones detectados:</p>
+                <ul className="list-disc pl-6 flex flex-col gap-1">
+                  {result.vishing_analysis.patterns_detected.map((p) => (
+                    <li key={p} className="leading-relaxed font-mono text-sm">
+                      {p}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {result.vishing_analysis.claimed_entity ? (
+              <p className="text-sm">
+                <span className="font-semibold">Entidad reclamada por el llamante:</span>{" "}
+                {result.vishing_analysis.claimed_entity}
+              </p>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
+
+      {/* ================== Verificación de identidad (Identity Verifier) ================== */}
+      {result.identity_check ? (
+        <details
+          className="surface-card border-0 bg-[var(--color-surface-2)] p-4"
+          open={result.identity_check.outcome !== "transfer_authorized"}
+        >
+          <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base focus-visible:outline-2">
+            Verificación de identidad del llamante
+            <span className="ml-2 inline-block px-2 py-0.5 rounded text-xs font-mono bg-[var(--color-surface-3)] text-[color:var(--color-text-muted)]">
+              {result.identity_check.outcome}
+            </span>
+          </summary>
+          <div className="mt-3 flex flex-col gap-3 text-[color:var(--color-text)]">
+            <p className="leading-relaxed">{result.identity_check.rationale}</p>
+            <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-3)] p-3">
+              <p className="text-sm font-semibold text-[color:var(--color-text-muted)] mb-1">
+                Plan de verificación humana sugerido al cuidador:
+              </p>
+              <p className="leading-relaxed text-[color:var(--color-text)] whitespace-pre-wrap">
+                {result.identity_check.challenge_plan_for_cuidador}
+              </p>
+            </div>
+            {result.identity_check.evasion_detected ? (
+              <p className="text-sm font-semibold text-[color:var(--color-danger)]">
+                Vigía detectó señales de evasión / presión durante la verificación.
+              </p>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
+
+      {/* ================== Citas regulatorias (Regulatory Translator) ================== */}
+      {result.regulatory && !result.regulatory.cite_or_silent &&
+      result.regulatory.citations.length > 0 ? (
+        <details
+          className="surface-card border-0 bg-[var(--color-surface-2)] p-4"
+        >
+          <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base focus-visible:outline-2">
+            Citas regulatorias verificadas
+            <span className="ml-2 inline-block px-2 py-0.5 rounded text-xs font-mono bg-[var(--color-surface-3)] text-[color:var(--color-text-muted)]">
+              {result.regulatory.citations.length} cita
+              {result.regulatory.citations.length === 1 ? "" : "s"}
+            </span>
+          </summary>
+          <div className="mt-3 flex flex-col gap-4 text-[color:var(--color-text)]">
+            <p className="leading-relaxed">{result.regulatory.translation_es}</p>
+            <ul className="flex flex-col gap-3">
+              {result.regulatory.citations.map((c, i) => (
+                <li
+                  key={i}
+                  className="rounded border border-[var(--color-border)] bg-[var(--color-surface-3)] p-3"
+                >
+                  <p className="text-sm font-semibold text-[color:var(--color-text-muted)] mb-1">
+                    Fuente: {c.source_id}
+                  </p>
+                  <blockquote className="border-l-4 border-[var(--color-border)] pl-3 leading-relaxed italic">
+                    “{c.quote}”
+                  </blockquote>
+                  <a
+                    href={c.source_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-2 inline-block text-sm underline text-[color:var(--color-text-link)] break-all"
+                  >
+                    Ver en fuente oficial →
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </details>
+      ) : null}
+
+      {/* ================== Razonamiento del Triage (colapsable) ================== */}
       <details className="surface-card border-0 bg-[var(--color-surface-2)] p-4">
         <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base focus-visible:outline-2">
-          Por qué Vigía decidió esto
+          Decisión inicial del Triage
+          <span
+            className="ml-2 inline-block px-2 py-0.5 rounded text-xs font-bold"
+            style={{
+              background: triageBadgeSty.bg,
+              color: triageBadgeSty.fg,
+              border: `1px solid ${triageBadgeSty.border}`,
+            }}
+          >
+            {triageLabel}
+          </span>
         </summary>
         <div className="mt-3 flex flex-col gap-3 text-[color:var(--color-text)]">
           <p className="leading-relaxed">{result.decision.rationale}</p>
 
           {result.decision.evidence_of_social_engineering.length > 0 ? (
             <div>
-              <p className="font-semibold mb-1">Señales detectadas:</p>
+              <p className="font-semibold mb-1">Señales detectadas en el primer pase:</p>
               <ul className="list-disc pl-6 flex flex-col gap-1">
                 {result.decision.evidence_of_social_engineering.map(
                   (item, idx) => (
@@ -211,7 +395,7 @@ export function VerdictPanel({ result, onReset }: Props) {
             </div>
           ) : (
             <p className="text-[color:var(--color-text-subtle)] italic">
-              No se identificaron señales de manipulación.
+              No se identificaron señales de manipulación en el primer pase.
             </p>
           )}
         </div>
@@ -270,6 +454,43 @@ export function VerdictPanel({ result, onReset }: Props) {
             </dt>
             <dd className="mt-1 text-[color:var(--color-text)]">
               {result.pii_summary.hits_count}
+            </dd>
+          </div>
+
+          <div className="sm:col-span-2">
+            <dt className="text-sm font-semibold text-[color:var(--color-text-muted)]">
+              Tiempo por agente
+            </dt>
+            <dd className="mt-1 flex flex-wrap gap-2 text-xs font-mono text-[color:var(--color-text)]">
+              <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
+                STT: {result.latency_ms.stt_ms}ms
+              </span>
+              <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
+                PII: {result.latency_ms.pii_redact_ms}ms
+              </span>
+              <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
+                Triage: {result.latency_ms.triage_ms}ms
+              </span>
+              {typeof result.latency_ms.identity_ms === "number" ? (
+                <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
+                  Identity: {result.latency_ms.identity_ms}ms
+                </span>
+              ) : null}
+              {typeof result.latency_ms.vishing_ms === "number" ? (
+                <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
+                  Vishing: {result.latency_ms.vishing_ms}ms
+                </span>
+              ) : null}
+              {typeof result.latency_ms.regulatory_ms === "number" ? (
+                <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
+                  Regulatory: {result.latency_ms.regulatory_ms}ms
+                </span>
+              ) : null}
+              {typeof result.latency_ms.notifier_ms === "number" ? (
+                <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
+                  Notifier: {result.latency_ms.notifier_ms}ms
+                </span>
+              ) : null}
             </dd>
           </div>
 

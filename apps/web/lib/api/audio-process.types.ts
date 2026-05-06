@@ -6,6 +6,22 @@ import type {
   CallTriageDecision,
   CallTriageFailReason,
 } from "../agents/call-triage";
+import type {
+  CaregiverNotifierDecision,
+  CaregiverNotifierFailReason,
+} from "../agents/caregiver-notifier";
+import type {
+  IdentityVerifierDecision,
+  IdentityVerifierFailReason,
+} from "../agents/identity-verifier";
+import type {
+  RegulatoryTranslatorDecision,
+  RegulatoryTranslatorFailReason,
+} from "../agents/regulatory-translator";
+import type {
+  VishingAnalystDecision,
+  VishingAnalystFailReason,
+} from "../agents/vishing-analyst";
 import type { PiiKind } from "../validators/pii";
 
 // ============================================================
@@ -52,6 +68,14 @@ export type LatencyBreakdown = {
   stt_ms: number;
   pii_redact_ms: number;
   triage_ms: number;
+  /** Solo presente si Triage delegó a Identity Verifier. */
+  identity_ms?: number;
+  /** Solo presente si la cascada invocó Vishing Analyst (verdict ≠ legit o sospecha). */
+  vishing_ms?: number;
+  /** Solo presente si Vishing pidió citas regulatorias. */
+  regulatory_ms?: number;
+  /** Siempre presente cuando Triage devolvió ok=true. */
+  notifier_ms?: number;
   total_ms: number;
 };
 
@@ -60,6 +84,19 @@ export type PiiRedactionSummary = {
   hits_count: number;
   /** Conteo por tipo (RUT, PHONE, CARD, IBAN, ACCOUNT). */
   count_by_kind: Partial<Record<PiiKind, number>>;
+};
+
+/** Estado por agente de la cascada, incluyendo fallback. */
+export type CascadeStageStatus<F extends string> =
+  | { ok: true }
+  | { ok: false; reason: F; fell_back: true };
+
+export type CascadeStatuses = {
+  triage: CascadeStageStatus<CallTriageFailReason>;
+  identity?: CascadeStageStatus<IdentityVerifierFailReason>;
+  vishing?: CascadeStageStatus<VishingAnalystFailReason>;
+  regulatory?: CascadeStageStatus<RegulatoryTranslatorFailReason>;
+  notifier?: CascadeStageStatus<CaregiverNotifierFailReason>;
 };
 
 export type AudioProcessSuccess = {
@@ -72,12 +109,22 @@ export type AudioProcessSuccess = {
   pii_summary: PiiRedactionSummary;
   /** Decisión completa del Call Triage. Schema canónico en lib/agents/call-triage.ts. */
   decision: CallTriageDecision;
+  /** Identity Verifier decision (presente si Triage delegó a "delegate_to_identity_verifier"). */
+  identity_check?: IdentityVerifierDecision;
+  /** Vishing Analyst decision (presente si la cascada gatilló análisis profundo). */
+  vishing_analysis?: VishingAnalystDecision;
+  /** Regulatory Translator decision (presente si Vishing pidió citas regulatorias). */
+  regulatory?: RegulatoryTranslatorDecision;
+  /** Mensaje accionable consolidado para el cuidador (siempre presente cuando Triage ok). */
+  caregiver_message?: CaregiverNotifierDecision;
+  /** Estado por agente — útil para auditar dónde cayó la cascada. */
+  cascade_statuses: CascadeStatuses;
   /** Modelos invocados durante el procesamiento (rúbrica B3 + M3 multi-modelo). */
   models_used: string[];
   /** Tools/clientes invocados (rúbrica B2). */
   tools_used: string[];
   latency_ms: LatencyBreakdown;
-  /** ¿Se detectó intento de exfiltrar canary token? Si true, el Triage cayó a fail-safe. */
+  /** ¿Se detectó intento de exfiltrar canary token? Si true, algún eslabón cayó a fail-safe. */
   canary_present: boolean;
   /** Si el Triage cayó a fail-safe (canary_leaked / schema_invalid / model_error), aquí va el motivo. */
   fail_reason?: CallTriageFailReason;
@@ -144,6 +191,34 @@ export function badgeSeverityForAction(
     case "transfer_now":
       return "safe";
   }
+}
+
+/** Severidad del badge UI según el Caregiver Notifier (canónico cuando la cascada completó). */
+export function badgeSeverityForCaregiver(
+  severity: CaregiverNotifierDecision["severity"],
+): UiBadgeSeverity {
+  switch (severity) {
+    case "HIGH":
+      return "danger";
+    case "MEDIUM":
+      return "warning";
+    case "LOW":
+      return "neutral";
+  }
+}
+
+/**
+ * Selector unificado: si el Notifier produjo un mensaje, su severity es la canónica
+ * (consolida triage + identity + vishing). Si no (cascada cortada en Triage), caemos
+ * al mapping del Triage para no romper UI cuando solo hay decisión del primer eslabón.
+ */
+export function badgeSeverityForResponse(
+  result: AudioProcessSuccess,
+): UiBadgeSeverity {
+  if (result.caregiver_message) {
+    return badgeSeverityForCaregiver(result.caregiver_message.severity);
+  }
+  return badgeSeverityForAction(result.decision.action);
 }
 
 /** Etiqueta humana corta (≤24 chars) por action — para badge accesible en español chileno claro. */
