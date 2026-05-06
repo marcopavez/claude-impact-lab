@@ -122,9 +122,9 @@ export function mockAudioProcessResponse(
     scenario === "scam"
       ? {
           severity: "HIGH" as const,
-          headline: "Llamada bloqueada — patrón de estafa detectado",
+          headline: "Estafa detectada en este audio",
           summary:
-            "Vigía detectó el cuento del tío chileno: emergencia familiar inventada + pedido urgente de dinero + cuenta destino dictada. La llamada quedó bloqueada.",
+            "Vigía detectó el cuento del tío chileno en este audio: emergencia familiar inventada + pedido urgente de dinero + cuenta destino dictada.",
           first_action:
             "No devuelvas el llamado al número desconocido. Llamá vos al número del nieto que ya tenés agendado.",
           secondary_actions: [
@@ -132,9 +132,9 @@ export function mockAudioProcessResponse(
             "Avisá al resto de la familia: el patrón se repite con varios adultos mayores en Chile.",
           ],
           regulatory_note: "",
-          push_title: "Vigía: llamada bloqueada",
+          push_title: "Vigía: estafa detectada",
           push_body:
-            "Detectamos cuento del tío. NO devuelvas el llamado al número desconocido.",
+            "Detectamos cuento del tío en el audio. NO devuelvas el llamado al número desconocido.",
           canary_present: false,
         }
       : undefined;

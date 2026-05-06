@@ -7,6 +7,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 
+import { logError } from "../log";
 import {
   Citation,
   SourceFetcher,
@@ -142,13 +143,16 @@ export const translateWithCitationsTool = {
 };
 
 // ============================================================
-// System prompt
+// System prompt — split en static (cacheable) + dynamic (sesión)
 // ============================================================
+//
+// Si el caller no overridea `allowed_sources`, el prompt es 100% estático y
+// va al cache. Si overridea con un subset, el bloque dinámico declara el override
+// y el modelo lo respeta (sigue siendo cacheable a nivel del bloque static).
 
-function renderSystemPrompt(allowedSources: readonly SourceId[]): string {
-  const allowedList = allowedSources.map((s) => `- ${s}`).join("\n");
+const FULL_ALLOWED_LIST = ALL_SOURCE_IDS.map((s) => `- ${s}`).join("\n");
 
-  return `Eres el Regulatory Translator de Vigía. Tu única función es traducir consultas regulatorias chilenas (leyes, circulares, alertas, derechos del consumidor en contexto de fraude telefónico/vishing) a lenguaje ciudadano nivel sexto básico, con cita textual de fuente oficial.
+const REGULATORY_STATIC_RULES = `Eres el Regulatory Translator de Vigía. Tu única función es traducir consultas regulatorias chilenas (leyes, circulares, alertas, derechos del consumidor en contexto de fraude telefónico/vishing) a lenguaje ciudadano nivel sexto básico, con cita textual de fuente oficial.
 
 REGLA CERO — CITA O CALLA (sub-check A6, binario):
 Si NO encuentras una fuente oficial confiable que sostenga tu traducción, devuelves \`cite_or_silent=true\` y \`translation_es\` debe ser EXACTAMENTE el literal:
@@ -158,8 +162,9 @@ Si NO encuentras una fuente oficial confiable que sostenga tu traducción, devue
 Sin variantes, sin disculpas, sin prosa libre, sin agregados. Cualquier desviación rompe la auditoría A6.
 
 REGLAS DE CITACIÓN:
-1. Solo se aceptan fuentes de la whitelist siguiente (source_id):
-${allowedList}
+1. Solo se aceptan fuentes de la whitelist canónica de source_id:
+${FULL_ALLOWED_LIST}
+   Si el bloque CONTEXTO DE SESIÓN al final declara un override (subset de fuentes permitidas), respetá ese subset; si no declara nada, usá la lista completa.
 2. \`source_url\` debe ser https:// (nunca http) y pertenecer al dominio oficial del source_id correspondiente.
 3. \`quote\` es texto LITERAL del documento — substring exacta o muy cercana. Un post-validator determinista (substring + Levenshtein 0.95) corre después de tu output. Si inventaste, paráfrasis, o cita texto que no existe, FALLAS.
 4. \`quote\` mínimo 20 caracteres, máximo 400. Cita lo más corto posible que sostenga la afirmación.
@@ -193,6 +198,17 @@ REGLAS DURAS (no se negocian):
 - NUNCA respondas con prosa libre fuera del tool call.
 - Si \`cite_or_silent=true\`, citations DEBE ser array vacío y translation_es DEBE ser exactamente "${CITE_OR_SILENT_LITERAL}".
 - Si \`cite_or_silent=false\`, citations DEBE tener al menos 1 elemento válido.`;
+
+function renderSessionContext(allowedSources: readonly SourceId[]): string {
+  const isFullSet = allowedSources.length === ALL_SOURCE_IDS.length;
+  if (isFullSet) {
+    return `CONTEXTO DE SESIÓN:
+- subset_de_fuentes_override: ninguno (usá la whitelist canónica completa).`;
+  }
+  const subsetList = allowedSources.map((s) => `- ${s}`).join("\n");
+  return `CONTEXTO DE SESIÓN (cambia por request):
+- subset_de_fuentes_override (usá SOLO estos source_id en esta consulta):
+${subsetList}`;
 }
 
 // ============================================================
@@ -344,7 +360,7 @@ export async function runRegulatoryTranslator(
       ? input.allowed_sources
       : ALL_SOURCE_IDS;
 
-  const systemPrompt = renderSystemPrompt(allowed);
+  const sessionContext = renderSessionContext(allowed);
   const userMessage = buildUserMessage(input);
 
   const startedAt = Date.now();
@@ -366,12 +382,23 @@ export async function runRegulatoryTranslator(
         model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0,
-        system: systemPrompt,
+        system: [
+          {
+            type: "text",
+            text: REGULATORY_STATIC_RULES,
+            cache_control: { type: "ephemeral" },
+          },
+          { type: "text", text: sessionContext },
+        ],
         tools: [translateWithCitationsTool],
         tool_choice: { type: "tool", name: translateWithCitationsTool.name },
         messages,
       });
-    } catch {
+    } catch (err) {
+      logError("regulatory-translator", err, {
+        attempt,
+        latency_ms: Date.now() - startedAt,
+      });
       return {
         ok: false,
         reason: "model_error",

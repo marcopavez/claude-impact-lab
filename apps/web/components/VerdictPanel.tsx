@@ -226,8 +226,8 @@ export function VerdictPanel({ result, onReset }: Props) {
           Lo que dijo el llamante
         </h3>
         <p className="text-sm text-[color:var(--color-text-subtle)]">
-          Los datos sensibles (cuentas, teléfonos, RUT) fueron ocultados antes
-          de mostrarte el resultado.
+          Antes del análisis, Vigía revisa la transcripción en busca de RUT,
+          números de cuenta y teléfonos para ocultarlos automáticamente.
         </p>
         <div
           className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 leading-relaxed text-[color:var(--color-text)]"

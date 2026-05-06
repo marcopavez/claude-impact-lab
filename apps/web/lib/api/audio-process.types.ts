@@ -221,14 +221,18 @@ export function badgeSeverityForResponse(
   return badgeSeverityForAction(result.decision.action);
 }
 
+// Las etiquetas describen lo que Vigía DETECTÓ en el audio que el cuidador subió.
+// El MVP/PoC analiza audios pre-grabados; no cortamos llamadas en vivo. Evitamos verbos
+// como "bloquear / cortar / transferir" que sugieren acción telefónica en tiempo real.
+
 /** Etiqueta humana corta (≤24 chars) por action — para badge accesible en español chileno claro. */
 export const ACTION_LABEL_ES: Record<CallTriageDecision["action"], string> = {
-  hangup_with_warning: "Llamada bloqueada",
+  hangup_with_warning: "Estafa detectada",
   delegate_to_identity_verifier: "Verificación pendiente",
-  lookup_cmf_then_take_message: "Mensaje + verificación",
-  take_message: "Mensaje guardado",
-  ask_clarifying_question: "Pidiendo aclaración",
-  transfer_now: "Transferencia",
+  lookup_cmf_then_take_message: "Verificá el banco",
+  take_message: "Sin acciones urgentes",
+  ask_clarifying_question: "Motivo poco claro",
+  transfer_now: "Audio sin señales",
 };
 
 /** Descripción larga por action — para tooltip o párrafo descriptivo accesible. */
@@ -237,14 +241,15 @@ export const ACTION_DESCRIPTION_ES: Record<
   string
 > = {
   hangup_with_warning:
-    "Vigía detectó señales claras de estafa y cortó la llamada. No es necesaria acción del cuidador.",
+    "Vigía detectó señales claras de estafa en este audio. No le devuelvas el llamado al número que llamó.",
   delegate_to_identity_verifier:
-    "El llamante dice ser familiar. Vigía iniciará verificación con palabra clave + canal alternativo antes de transferir.",
+    "El llamante dice ser familiar. Antes de devolver el llamado, verificá con palabra clave y llamá vos al número real conocido del familiar.",
   lookup_cmf_then_take_message:
-    "El llamante dice ser de un banco. Vigía verifica la entidad en CMF y toma mensaje, sin transferir.",
+    "El llamante dice ser de un banco. Antes de cualquier acción, llamá vos al número oficial del banco que aparece en la tarjeta o sitio oficial.",
   take_message:
-    "Servicio o llamada legítima sin urgencia. Vigía tomó el mensaje para revisar más tarde.",
+    "Llamada sin urgencia ni señales claras de estafa. Revisá el mensaje cuando puedas; no hay acción inmediata.",
   ask_clarifying_question:
-    "El motivo del llamado no quedó claro. Vigía pide aclaración antes de decidir.",
-  transfer_now: "Llamada verificada como segura. Transferida al titular.",
+    "El motivo del llamado no quedó claro en este audio. Conviene pedir aclaración antes de cualquier acción.",
+  transfer_now:
+    "Audio sin señales de estafa. No hay acciones urgentes para el cuidador.",
 };
