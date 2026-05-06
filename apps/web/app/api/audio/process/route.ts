@@ -385,43 +385,115 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
-  // ----- 10. Regulatory Translator (eslabón 4 — solo si Vishing pidió citas) -----
-  // En MVP corremos solo la PRIMERA pregunta para mantener latencia bajo 30s budget.
-  // Futuras iteraciones pueden encadenar todas con paralelismo.
+  // ----- 10+11. Regulatory Translator + Caregiver Notifier (en paralelo) -----
+  // Ambos consumen los outputs de Triage/Identity/Vishing y son independientes
+  // entre sí. Lanzamos en paralelo. El Notifier corre con regulatory_decision=undefined;
+  // si Regulatory devuelve cita válida, después populamos el regulatory_note del
+  // Notifier de forma determinista (sin llamada extra al modelo). Ahorro: ~3-7s
+  // de latencia cuando ambos eslabones aplican.
   let regulatoryDecision: RegulatoryTranslatorDecision | undefined;
   let regulatoryElapsed: number | undefined;
+  let notifierDecision: CaregiverNotifierDecision | undefined;
+  let notifierElapsed: number | undefined;
+
   const firstRegQuestion =
     vishingDecision?.regulatory_questions_es?.[0]?.trim() ?? "";
-  if (firstRegQuestion.length > 0) {
-    const rStart = Date.now();
-    let rResult: RegulatoryTranslatorResult;
+
+  const regulatoryPromise: Promise<{
+    result: RegulatoryTranslatorResult | null;
+    elapsed: number;
+  }> =
+    firstRegQuestion.length > 0
+      ? (async () => {
+          const rStart = Date.now();
+          try {
+            const r = await runRegulatoryTranslator(
+              {
+                question_es: firstRegQuestion,
+                context_transcript: piiResult.redacted,
+              },
+              { fetchSource: httpSourceFetcher },
+            );
+            return { result: r, elapsed: Date.now() - rStart };
+          } catch (err) {
+            logError("audio-process.regulatory-throw", err, {
+              audio_id: audioId,
+              latency_ms: Date.now() - rStart,
+            });
+            return {
+              result: {
+                ok: false,
+                reason: "model_error",
+                fallback_decision: {
+                  translation_es: "no encontré fuente para esta consulta",
+                  citations: [],
+                  cite_or_silent: true,
+                  rationale: "Fail-safe regulatory por error de red.",
+                },
+                latency_ms: Date.now() - rStart,
+                retries: 0,
+              },
+              elapsed: Date.now() - rStart,
+            };
+          }
+        })()
+      : Promise.resolve({ result: null, elapsed: 0 });
+
+  const notifierPromise: Promise<{
+    result: CaregiverNotifierResult;
+    elapsed: number;
+  }> = (async () => {
+    const nStart = Date.now();
     try {
-      rResult = await runRegulatoryTranslator(
-        {
-          question_es: firstRegQuestion,
-          context_transcript: piiResult.redacted,
-        },
-        { fetchSource: httpSourceFetcher },
-      );
-    } catch (err) {
-      logError("audio-process.regulatory-throw", err, {
-        audio_id: audioId,
-        latency_ms: Date.now() - rStart,
+      const n = await runCaregiverNotifier({
+        protected_name: protectedName,
+        triage_decision: triageDecision,
+        identity_decision: identityDecision,
+        vishing_decision: vishingDecision,
+        // Paralelo con Regulatory: el Notifier no recibe la decisión regulatoria,
+        // y por contrato emite regulatory_note="". Se rellena después si aplica.
+        regulatory_decision: undefined,
       });
-      rResult = {
-        ok: false,
-        reason: "model_error",
-        fallback_decision: {
-          translation_es: "no encontré fuente para esta consulta",
-          citations: [],
-          cite_or_silent: true,
-          rationale: "Fail-safe regulatory por error de red.",
+      return { result: n, elapsed: Date.now() - nStart };
+    } catch (err) {
+      logError("audio-process.notifier-throw", err, {
+        audio_id: audioId,
+        latency_ms: Date.now() - nStart,
+      });
+      return {
+        result: {
+          ok: false,
+          reason: "model_error",
+          fallback_decision: {
+            severity: "MEDIUM",
+            headline: "Audio sospechoso — verificación pendiente",
+            summary:
+              "El análisis se completó parcialmente. Por seguridad tratamos este audio como sospechoso.",
+            first_action:
+              "No devuelvas el llamado al número que apareció. Si era importante, llamá vos al número oficial.",
+            secondary_actions: [],
+            regulatory_note: "",
+            push_title: "Vigía: verificación pendiente",
+            push_body: "Análisis parcial. Llamá vos al número oficial.",
+            canary_present: false,
+          },
+          canary_token: "",
+          latency_ms: Date.now() - nStart,
         },
-        latency_ms: Date.now() - rStart,
-        retries: 0,
+        elapsed: Date.now() - nStart,
       };
     }
-    regulatoryElapsed = Date.now() - rStart;
+  })();
+
+  const [regulatoryOutcome, notifierOutcome] = await Promise.all([
+    regulatoryPromise,
+    notifierPromise,
+  ]);
+
+  // ----- Procesar resultado de Regulatory -----
+  if (regulatoryOutcome.result !== null) {
+    const rResult = regulatoryOutcome.result;
+    regulatoryElapsed = regulatoryOutcome.elapsed;
     regulatoryDecision = rResult.ok
       ? rResult.decision
       : rResult.fallback_decision;
@@ -433,46 +505,10 @@ export async function POST(request: Request): Promise<Response> {
     toolsUsed.push("http.fetchSource");
   }
 
-  // ----- 11. Caregiver Notifier (eslabón 5 — siempre que Triage haya devuelto algo) -----
-  let notifierDecision: CaregiverNotifierDecision | undefined;
-  let notifierElapsed: number | undefined;
+  // ----- Procesar resultado de Notifier -----
   {
-    const nStart = Date.now();
-    let nResult: CaregiverNotifierResult;
-    try {
-      nResult = await runCaregiverNotifier({
-        protected_name: protectedName,
-        triage_decision: triageDecision,
-        identity_decision: identityDecision,
-        vishing_decision: vishingDecision,
-        regulatory_decision: regulatoryDecision,
-      });
-    } catch (err) {
-      logError("audio-process.notifier-throw", err, {
-        audio_id: audioId,
-        latency_ms: Date.now() - nStart,
-      });
-      nResult = {
-        ok: false,
-        reason: "model_error",
-        fallback_decision: {
-          severity: "MEDIUM",
-          headline: "Audio sospechoso — verificación pendiente",
-          summary:
-            "El análisis se completó parcialmente. Por seguridad tratamos este audio como sospechoso.",
-          first_action:
-            "No devuelvas el llamado al número que apareció. Si era importante, llamá vos al número oficial.",
-          secondary_actions: [],
-          regulatory_note: "",
-          push_title: "Vigía: verificación pendiente",
-          push_body: "Análisis parcial. Llamá vos al número oficial.",
-          canary_present: false,
-        },
-        canary_token: "",
-        latency_ms: Date.now() - nStart,
-      };
-    }
-    notifierElapsed = Date.now() - nStart;
+    const nResult = notifierOutcome.result;
+    notifierElapsed = notifierOutcome.elapsed;
     notifierDecision = nResult.ok ? nResult.decision : nResult.fallback_decision;
     cascadeStatuses.notifier = nResult.ok
       ? { ok: true }
@@ -485,6 +521,29 @@ export async function POST(request: Request): Promise<Response> {
     if (!canaryPresent && !nResult.ok && nResult.reason === "canary_leaked") {
       canaryPresent = true;
     }
+  }
+
+  // ----- Post-merge: inyectar regulatory_note en el Notifier si Regulatory aportó cita válida -----
+  // Como corren en paralelo, el Notifier no podía saber si Regulatory iba a citar.
+  // Si tenemos cita válida (cite_or_silent=false y citations≥1), poblamos el
+  // regulatory_note de forma determinista, respetando el cap de 350 chars del schema.
+  if (
+    notifierDecision &&
+    regulatoryDecision &&
+    regulatoryDecision.cite_or_silent === false &&
+    regulatoryDecision.citations.length > 0 &&
+    notifierDecision.regulatory_note.length === 0
+  ) {
+    const sourceLabel = regulatoryDecision.citations[0].source_id;
+    const translation = regulatoryDecision.translation_es.trim();
+    const PREFIX = `Según ${sourceLabel}: `;
+    const MAX = 350;
+    const room = MAX - PREFIX.length;
+    notifierDecision.regulatory_note =
+      PREFIX +
+      (translation.length <= room
+        ? translation
+        : translation.slice(0, Math.max(0, room - 1)).trimEnd() + "…");
   }
 
   // ----- 12. Build success response -----
