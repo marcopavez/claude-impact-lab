@@ -22,7 +22,7 @@
 **No va:**
 - Resúmenes propios o paráfrasis (para eso está `CLAUDE.md`).
 - Notas de mentores (esas en `docs/notes-mentores/` si las hay).
-- Documentos del propio proyecto (para eso `docs/IDEA.md`, `docs/MVP-JUEVES.md`, etc.).
+- Documentos del propio proyecto (para eso `docs/PROYECTO.md`, `docs/PLAN.md`, `docs/SEGURIDAD.md`).
 
 ## Cómo se llena
 
