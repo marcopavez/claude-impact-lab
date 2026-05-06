@@ -561,3 +561,119 @@ Bendi (Haiku 4.5) pre-evalúa con evidencia → mentor confirma.
 6. Si empate → voto del comité.
 
 **Implicación operativa:** **M3 es el desempate más fuerte (35% peso + primer desempate).** Cualquier inversión que mejore M3 (B1 prompts más específicos, B2 más tools válidas, B3 más calls visibles en consola) tiene el mejor ROI. La cascada Triage + Verifier + Analyst + Regulatory + Notifier sostiene M3 generando decenas de calls por llamada y mostrando arquitectura agéntica real.
+
+---
+
+## Apéndice A — Producto final ideal (visión post-MVP)
+
+> **Función:** snapshot del producto completo que las capas Core+Sólido+Wow describen + roadmap V2-V3. **Lo que se construye en el Lab es un MVP recortado** por restricción de tiempo (1 builder, ~12h hábiles, deadline técnico 6-mayo 20:00). Este apéndice queda como contrato del estado al que apuntamos en producción y como respaldo de Q&A: cuando el jurado pregunte "¿y esto?", se cita esta sección.
+
+### A.1 Telefonía en vivo bidireccional
+
+- **Twilio DID Chile** activo con KYC completo (no US trial).
+- **Twilio Programmable Voice + Media Streams** con WebSocket bidireccional µ-law 8kHz/20ms.
+- **Deepgram Nova-3 streaming** con interim transcripts <300ms; fallback `whisper.cpp` local en Fly.io.
+- **Twilio Polly Lupe-Neural** vía TwiML `<Say>` con `<prosody rate="slow">` durante la llamada.
+- **VAD bidireccional** que permite al llamante interrumpir naturalmente a Vigía.
+- **Call forwarding GSM `**21*<DID>#`** desde celular real de la persona protegida — cero instalación en su lado.
+- **SIP trunk chileno** como roadmap producción cuando volumen lo justifique (independencia de Twilio).
+
+### A.2 Cascada completa de agentes (8)
+
+- **Call Triage** (Sonnet 4.6, latencia <2s p50, bias defensivo).
+- **Identity Verifier** (Sonnet 4.6 sub-agente con `shared_word_check` + `kba_random_question` + `cross_channel_whatsapp_ack`).
+- **Vishing Analyst** (Opus 4.7 + extended thinking 4-8k tokens, post-call background).
+- **Regulatory Translator** (Sonnet 4.6 + RAG con `tool_choice: required`).
+- **Caregiver Notifier** (Sonnet 4.6 con tools web_push + whatsapp + sms).
+- **Phishing Analyst** (Sonnet 4.6 + Vision para canal secundario texto/imagen).
+- **Denuncia Builder** (Sonnet 4.6 + templates Sernac/PDI/CMF, output PDF).
+- **Classifier** (Haiku 4.5 para clasificación trivial canal secundario).
+- **Multi-modelo declarado y visible** en cada step del pipeline.
+
+### A.3 MCPs custom + tools completas
+
+- **`mcp-wiki-legal`** standalone server (pgvector + Voyage `voyage-3` embeddings) con tools `search`, `lookup_law`, `lookup_alerta`.
+- **`mcp-cmf`** standalone server con tools `lookup_entity`, `search_alertas` sobre snapshot diario.
+- **Tools SDK:** `tool-phone-lookup` (Subtel + heurística), `tool-twilio-call-control`, `tool-whatsapp-cross-channel`, `tool-web-push`, `tool-sms-twilio`, `tool-phishtank`, `tool-urlhaus`, `tool-denuncia-build`.
+- Tools schema JSON exportable + spotlighting + canary token + PII redactor + cost budgets + loop circuit breaker en cada wrapper.
+
+### A.4 PWA cuidador full
+
+- **Onboarding wizard 5 pasos:** identidad → whitelist (mín 3) → shared word → KBA → activación desvío con códigos GSM por operador chileno.
+- **Dashboard** con timeline `CallSession` + audio playable (signed URL TTL 24h) + feedback button + métricas agregadas.
+- **Configuración** con tabs whitelist / shared word / KBA / notificaciones / persona protegida / cuenta + endpoints ARCO+ (`/api/export`, `/api/account DELETE`).
+- **Live alerta** modal SSE durante llamada activa con botones "tomar control", "colgar", "dejar que Vigía decida".
+- **Web Push API + VAPID** primario + **WhatsApp Cloud API** redundante para HIGH risk + **SMS Twilio** fallback.
+- **Supabase Auth magic link** + RLS por `caregiver_id`.
+- **Service Worker** + manifest installable + cache UI shell.
+
+### A.5 RAG completo (≥7 fuentes)
+
+Wiki Legal Fintech, BCN Ley Fácil, BCN textos completos (leyes 21.459 / 21.663 / 21.521 / 19.628 / 21.719), CMF Alertas + Registro Prestadores Fintec, Sernac alertas, PDI Cibercrimen boletines, CSIRT Nacional boletines, Subtel asignación numeración.
+
+- **Citation validator determinista** (substring + Levenshtein 0.95 + normalización NFKC + cache 24h).
+- **Set golden adversarial ≥35 inputs phone-first** corriendo en CI con threshold 100% en bloques V21/V22/V17/V19 y ≥90% accuracy general.
+
+### A.6 Canales secundarios + Civic Intel
+
+- **Canal texto** PWA + WhatsApp: cuidador reenvía SMS sospechoso, recibe veredicto con citas en <8s.
+- **Canal imagen** PWA + WhatsApp: screenshot de SMS o app phishing, OCR + análisis Vision.
+- **Civic Intel Dashboard B2G** para CMF/PDI/Sernac con tendencias agregadas anónimas (k-anonymity por región/segmento, hash sobre URLs/audios). Heatmap regional + line chart 24h + bar chart por segmento + lista números top.
+
+### A.7 Privacidad y compliance Ley 21.719
+
+- **PII redactor determinista** (RUT, móvil, tarjeta Luhn, cuenta) antes del modelo, antes de logs, antes de embeddings.
+- **Audios y transcripts TTL 24h** con signed URLs.
+- **Shared words y KBA bcrypt/argon2id** en reposo.
+- **Endpoints ARCO+** funcionales (`/api/export` ZIP + `/api/account` DELETE cascade).
+- **Notificación de brechas <72h** en runbook operativo.
+- **Registro de actividades de tratamiento** documentado.
+
+### A.8 Distribución y go-to-market
+
+- **B2NGO** vía SENAMA, Fundación Las Rosas, Hogar de Cristo, gremios adulto mayor.
+- **B2G** Civic Intel para CMF / PDI / Sernac / CSIRT (sustentabilidad + señal temprana).
+- **B2B2C** integración con bancos cooperativos y CCAF (Cajas de Compensación).
+- **Freemium** cuidador familiar (PWA básica gratis, multi-cuidador + exports médicos en plan pago).
+
+### A.9 Roadmap V2-V3 fuera de visión MVP
+
+- **App nativa Android/iOS** con captura de audio en background.
+- **Multi-idioma** (es-MX, es-AR, en, pt) para segmento migrantes ~1.5M.
+- **Voice cloning detection** cuando estado del arte madure y datasets de referencia estén disponibles.
+- **Multi-cuidador por persona protegida** con coordinación entre hijos.
+- **Integración FHIR/HL7** a registros médicos (path B2B con cuidadores formales).
+- **Análisis acústico real** (prosody/emotion detection con modelos especializados).
+- **Microempresarios** (~1.8M SII 2025) con vishing suplantando SII y proveedores.
+- **Jóvenes 15-25** (~3M) con foco smishing y redes.
+
+### A.10 Métricas de producto en estado ideal
+
+- **Latencia Triage en vivo:** mediana <2s, p95 <3s.
+- **Latencia post-call (Opus + extended thinking):** mediana <12s, p95 <20s.
+- **Tasa de cita en respuestas regulatorias:** 100%.
+- **Aciertos en golden set adversarial:** ≥95% + 100% en bloques de seguridad.
+- **Falsos negativos en V21 suplantación social:** **0**.
+- **Tiempo detección:** real-time durante la llamada (vs 72h pre-Vigía).
+- **Cobertura de población protegida:** ≥10k personas año 1, ≥100k año 2.
+- **Costo unitario:** USD 4-8/mes por persona protegida (Twilio + Deepgram + Claude Sonnet).
+
+---
+
+### A.11 Brecha MVP-Lab vs ideal (matriz explícita)
+
+| Componente | MVP Lab (HOY) | Ideal (visión producción) | Gap a cerrar |
+|---|---|---|---|
+| **Telefonía** | Audio batch pre-grabado | Twilio Media Streams live + VAD bidireccional | DID Chile + KYC + WebSocket bidireccional + interrupciones naturales |
+| **Cascada agentes** | 4 (Triage + Verifier + Regulatory + Vishing) | 8 (+ Notifier + Phishing + Denuncia + Classifier) | 4 agentes adicionales + canal secundario texto/imagen |
+| **Tools** | 3 SDK + 1 MCP custom (`mcp-wiki-legal`) | 8 SDK + 2 MCPs custom | `mcp-cmf` standalone + 5 tools adicionales |
+| **RAG** | 1 fuente (Wiki Legal) | 7+ fuentes con ingest scheduled | 6 ingest scripts + cron diario + reindexing |
+| **PWA** | 1 pantalla pública (timeline mock + 3 reales) | 4 pantallas + auth + Web Push + endpoints ARCO+ | Wizard onboarding + Configuración + Live SSE + magic link + VAPID + Service Worker |
+| **Notificaciones** | UI mock | Web Push + WhatsApp Cloud + SMS Twilio | VAPID setup + Meta KYC + templates aprobados + fallback chain |
+| **Privacidad** | PII redactor mínimo regex chileno | Redactor + bcrypt/argon2id + TTL 24h signed URLs + ARCO+ + brechas <72h | Hashing en reposo + cascade delete + runbook operativo |
+| **Quality** | 10-15 inputs golden | ≥35 inputs adversariales + CI threshold 100% bloques seguridad | 20+ inputs adicionales + GH Actions + bloqueo release |
+| **Civic Intel** | No | Dashboard B2G con 4 visualizaciones | Página completa + agregación anónima + viz Recharts/Tremor |
+| **Multi-canal** | Solo llamada simulada | Llamada + texto SMS + imagen | Phishing Analyst + Vision pipeline + WhatsApp webhook |
+| **Demo** | Video pre-grabado 3-5 min | Live demo + video backup | DID activo + ensayos + 3 llamadas pre-validadas en CI |
+
+**Defensa Q&A genérica:** *"Eso es parte del producto final descrito en `PLAN.md` Apéndice A. El MVP del Lab demuestra la lógica core (Identity Firewall + cascada de agentes + citación obligatoria) sobre audios pre-procesados; las capas live, multi-canal y B2G están en el plan ya escrito como continuación inmediata."*
