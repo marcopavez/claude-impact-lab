@@ -1,7 +1,9 @@
 // Vishing Analyst Agent — eslabón post-call de la cascada de Vigía.
 // Spec: docs/SEGURIDAD.md §22 (system prompt) + §19 (reglas comunes).
 // Modelo: Claude Opus 4.7 + extended thinking (budget ~4000 tokens).
-// tool_choice forzado sobre `submit_analysis`. Latencia objetivo: 10-20s aceptable.
+// tool_choice="auto" (extended thinking no acepta "any"/"tool"); el system prompt obliga
+// a invocar `submit_analysis` y el fallback schema_invalid cubre la prosa libre.
+// Latencia objetivo: 10-20s aceptable.
 //
 // En MVP/PoC (N20) NO hay MCP servers (mcp_wiki_legal.search, mcp_cmf.lookup_entity).
 // La división de responsabilidades es:
@@ -429,9 +431,12 @@ export async function runVishingAnalyst(
         { type: "text", text: sessionContext },
       ],
       tools: [submitAnalysisTool],
-      // Extended thinking exige tool_choice="any" o "auto" (no "tool" forzado a un nombre).
-      // Como sólo definimos `submitAnalysisTool`, "any" es equivalente a forzar ese tool.
-      tool_choice: { type: "any" },
+      // Extended thinking SOLO acepta tool_choice "auto" o "none". "any" y "tool" cuentan
+      // como "forzar tool use" y la API rechaza con 400 ("Thinking may not be enabled
+      // when tool_choice forces tool use"). Compensamos con (a) un único tool definido,
+      // (b) instrucción dura en el system prompt ("debes llamar `submit_analysis`"), y
+      // (c) fallback schema_invalid → buildFailSafe si el modelo se sale por prosa libre.
+      tool_choice: { type: "auto" },
       messages: [{ role: "user", content: userMessage }],
     });
   } catch (err) {
