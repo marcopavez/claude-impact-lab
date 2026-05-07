@@ -1,8 +1,9 @@
 // Vishing Analyst Agent — eslabón post-call de la cascada de Vigía.
 // Spec: docs/SEGURIDAD.md §22 (system prompt) + §19 (reglas comunes).
-// Modelo: Claude Opus 4.7 + extended thinking (budget ~4000 tokens).
-// tool_choice="auto" (extended thinking no acepta "any"/"tool"); el system prompt obliga
-// a invocar `submit_analysis` y el fallback schema_invalid cubre la prosa libre.
+// Modelo: Claude Opus 4.7 + adaptive thinking (effort: high por defecto).
+// tool_choice="auto" (thinking no acepta "any"/"tool" — la API rechaza con 400
+// "Thinking may not be enabled when tool_choice forces tool use"); el system prompt
+// obliga a invocar `submit_analysis` y el fallback schema_invalid cubre la prosa libre.
 // Latencia objetivo: 10-20s aceptable.
 //
 // En MVP/PoC (N20) NO hay MCP servers (mcp_wiki_legal.search, mcp_cmf.lookup_entity).
@@ -397,8 +398,11 @@ function buildFailSafe(): VishingAnalystDecision {
 
 export type VishingAnalystOpts = {
   client?: Anthropic;
-  /** Budget de tokens para extended thinking. Default 4000 (per SEGURIDAD §28). */
-  thinking_budget_tokens?: number;
+  /**
+   * Effort level para adaptive thinking. Default "high" (intelligence-sensitive).
+   * Opus 4.7 removió `budget_tokens`; el control de profundidad ahora es `effort`.
+   */
+  effort?: "low" | "medium" | "high" | "max";
 };
 
 export async function runVishingAnalyst(
@@ -409,7 +413,7 @@ export async function runVishingAnalyst(
   const canaryToken = generateCanaryToken();
   const sessionContext = renderSessionContext(input, canaryToken);
   const userMessage = spotlightTranscript(input.caller_transcript_redacted);
-  const thinkingBudget = opts.thinking_budget_tokens ?? 4000;
+  const effort = opts.effort ?? "high";
 
   const startedAt = Date.now();
   let response: Anthropic.Messages.Message;
@@ -417,11 +421,11 @@ export async function runVishingAnalyst(
   try {
     response = await client.messages.create({
       model: "claude-opus-4-7",
-      // max_tokens > thinking_budget, deja headroom para el tool call.
-      max_tokens: thinkingBudget + 2000,
-      // temperature=1 es requisito de extended thinking.
-      temperature: 1,
-      thinking: { type: "enabled", budget_tokens: thinkingBudget },
+      // Opus 4.7: adaptive thinking + effort controlan profundidad. max_tokens
+      // de 16000 deja headroom suficiente para el tool call con effort=high.
+      max_tokens: 16000,
+      thinking: { type: "adaptive" },
+      output_config: { effort },
       system: [
         {
           type: "text",
@@ -431,7 +435,7 @@ export async function runVishingAnalyst(
         { type: "text", text: sessionContext },
       ],
       tools: [submitAnalysisTool],
-      // Extended thinking SOLO acepta tool_choice "auto" o "none". "any" y "tool" cuentan
+      // Thinking SOLO acepta tool_choice "auto" o "none". "any" y "tool" cuentan
       // como "forzar tool use" y la API rechaza con 400 ("Thinking may not be enabled
       // when tool_choice forces tool use"). Compensamos con (a) un único tool definido,
       // (b) instrucción dura en el system prompt ("debes llamar `submit_analysis`"), y

@@ -138,8 +138,8 @@ console.log("→ [2/5] Identity Verifier — saltado (cuento del tío gatilla ha
 // cuando el fixture cambia y agregamos un caso family.
 void runIdentityVerifier;
 
-// --------- 3. Vishing Analyst (Opus 4.7 + thinking) ---------
-console.log("→ [3/5] Vishing Analyst (Opus 4.7 + extended thinking)…");
+// --------- 3. Vishing Analyst (Opus 4.7 + adaptive thinking) ---------
+console.log("→ [3/5] Vishing Analyst (Opus 4.7 + adaptive thinking)…");
 const vStart = Date.now();
 const vResult = await runVishingAnalyst({
   protected_name: protectedName,
