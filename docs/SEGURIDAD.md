@@ -1322,9 +1322,37 @@ Decisiones **confirmadas y son contrato del producto**. Cualquier cambio requier
   - *"¿Cómo citan sin RAG?"* → "Las ~7 fuentes oficiales son finitas y conocidas. Snapshot JSON estático con quotes pre-extraídos + fetch HTTP en caliente para post-validator (substring + Levenshtein 0.95). RAG vectorial es optimización V2 cuando el corpus crezca."
   - *"¿No baja la nota M3?"* → "No. La cascada Lean genera ~10-15 calls Claude por audio (Triage + Verifier + Regulatory + Vishing Opus + Notifier + tools). 5+ system prompts dedicados, ≥6 tools del SDK. M3 sostiene su peso intacto."
 
----
+### Bloque 8 — Switch STT a Groq Whisper Large v3 Turbo (N21, 2026-05-07)
 
-# PARTE VI — ANTI-PATRONES Y Q&A
+- **N21 Switch STT.** ElevenLabs Scribe v1 → **Groq · Whisper Large v3 Turbo**. La transcripción dejó de dominar el budget E2E: el endpoint de Groq (OpenAI-compatible, modelo `whisper-large-v3-turbo`) responde <1s típico para audios ≤60s contra los 5-15s advertidos por Scribe v1. ElevenLabs sigue activa **solo para TTS** (`eleven_v3`) en `scripts/render-scams.ts` para regenerar los 3 audios demo.
+
+  **Razón técnica:**
+  1. **Latencia.** Antes del switch, las mediciones repetidas mostraban ~7s de Scribe sobre audio de ~10s — ~30-40% del budget total contra la meta J3.3 (<30s para audio de 60s, <20s para audio de 10s). Groq Whisper Large v3 Turbo opera con inference acelerada en hardware propio (~166x real-time advertido); en pruebas devuelve <1s para el mismo input.
+  2. **Calidad equivalente para es-CL.** Whisper Large v3 (incluyendo la variante turbo) soporta los 99 idiomas del modelo base, español incluido. Para los 3 audios demo (cuento del tío, banco oficial, familiar legítimo) la calidad de transcripción es comparable a la de Scribe en validación interna.
+  3. **No rompe "Claude motor principal".** Whisper es modelo de **transcripción** (audio → texto), no de razonamiento. Misma categoría I/O sensorial que Scribe. Groq es la infraestructura de inference; no estamos usando un LLM de Groq para reasoning.
+
+  **Reformula:**
+  - **N7** STT ElevenLabs Scribe v1 → **STT Groq Whisper Large v3 Turbo** (`whisper-large-v3-turbo`).
+
+  **Reemplaza:**
+  - **`apps/web/lib/clients/elevenlabs.ts::transcribeAudio`** → eliminado. Reemplazado por **`apps/web/lib/clients/groq.ts::transcribeAudio`** con la misma signature de retorno (`text`, `languageCode`, `durationSec`, `raw`).
+  - Dependency `@elevenlabs/elevenlabs-js` sigue instalada — la usa `generateAudio` (TTS) + `listSpanishVoices`.
+  - Variable env `ELEVENLABS_API_KEY` sigue requerida solo si se regeneran los audios demo. **Nueva variable `GROQ_API_KEY`** requerida para producción del MVP (https://console.groq.com/keys, free tier suficiente para los ~9 calls del demo).
+
+  **Hace obsoleta la justificación anterior:**
+  - El argumento "Whisper de OpenAI descalifica por OpenAI-as-a-service" deja de ser razón para evitar Whisper. La defensa es "OpenAI-as-a-service descalifica; Groq hosteando Whisper open-source en hardware propio no es OpenAI-as-a-service". Si en Q&A el jurado pregunta por Whisper, la respuesta es: Whisper Large v3 es un modelo abierto (MIT), Groq lo hostea con inference acelerada, OpenAI no aparece en ninguna capa.
+
+  **Intactas (sin cambios):**
+  - **Cascada agéntica completa** Triage → Verifier → Vishing → Regulatory → Notifier. Sin tocar.
+  - **PII redaction regex chilena** pre-modelo sigue idéntica.
+  - **Citation validator** (substring + Levenshtein 0.95) sigue idéntico.
+  - **Threat model V1-V22** sin cambios. La asunción "trátalo como si Whisper devolviera texto adversarial" sigue siendo necesaria — el redactor PII corre después del STT y antes del primer modelo, sea Scribe o Groq Whisper.
+
+  **Defensa Q&A para el switch:**
+  - *"¿Por qué cambiaron el STT?"* → "Latencia. Scribe v1 entrega 5-15s en batch sobre audios ≤60s — eso era ~30-40% del budget E2E contra la meta J3.3. Groq Whisper Large v3 Turbo entrega <1s típico, saca al STT del path crítico y libera presupuesto para la cascada de razonamiento. Misma calidad de transcripción para es-CL."
+  - *"¿Whisper no era OpenAI?"* → "Whisper es un modelo de transcripción **abierto** (license MIT) publicado por OpenAI. Groq lo hostea en su propia infraestructura con inference acelerada. No estamos llamando a la API de OpenAI; tampoco usamos un LLM de Groq para razonamiento. Es exactamente la misma categoría I/O sensorial que Scribe."
+  - *"¿Y la regla 'Claude motor principal'?"* → "Intacta. Toda la cascada de razonamiento (Triage, Verifier, Vishing, Regulatory, Notifier) corre 100% en modelos Claude. Whisper es STT, transcribe audio a texto sin tomar decisiones. Es comparable a la separación entre micrófono y CPU."
+  - *"¿Qué pasa con la API key de ElevenLabs ya pagada?"* → "Sigue valiendo — ElevenLabs cubre el TTS (`eleven_v3`) que generó los 3 audios demo y puede regenerarlos si pivoteamos los scripts. Solo dejó de hacer STT."
 
 ## 32. Anti-patrones explícitos
 
@@ -1357,7 +1385,7 @@ Cosas que **no** vamos a hacer, por más tentadoras que sean:
 | *"¿Y si la abuela quiere conversar con su nieta?"* | El cuidador puede marcar a la nieta como `pass_after_verification` con shared word — la nieta dice la palabra una vez al inicio y queda transferida. O `always_pass` (médico, hijo titular). Granular. |
 | *"¿Por qué no usar voice cloning detection?"* | Out of scope MVP por estado del arte cambiante. La defensa real contra clonación de voz es factor de conocimiento (KBA) + factor de canal (cross-channel WhatsApp). Eso ya está. |
 | *"¿Por qué Twilio y no SIM chileno?"* | SIM físico no es viable sin SIM gateway hardware (USD 200-500 + Asterisk). Twilio Media Streams es la única infra madura con audio bidireccional µ-law 8kHz vía WebSocket en setup minutos. |
-| *"¿Y si el jurado interpreta 'solo Claude' como Whisper también?"* | Switch a whisper.cpp local en Fly.io con modelo open source MIT. Argumento "no llamamos a OpenAI, corremos pesos open en nuestra infra" definitivo. |
+| *"¿Y si el jurado interpreta 'solo Claude' como Whisper también?"* | Whisper Large v3 es un modelo de transcripción abierto (license MIT, publicado por OpenAI pero **no operado por OpenAI** en nuestro stack). Lo hostea Groq Cloud con inference acelerada en su hardware propio. Es STT (audio → texto), no razonamiento. La cascada completa de decisión (Triage, Verifier, Vishing, Regulatory, Notifier) corre 100% en Claude. Comparable a la separación entre micrófono y CPU. Detalle en §31 Bloque 8 (N21). |
 | *"¿Por qué PWA y no app nativa?"* | Cero fricción de distribución, no requiere App Store review. Web Push cubre alertas. Roadmap V2 a nativa cuando justifique capabilities (audio capture Android). |
 | *"¿Qué pasa si el cuidador no está disponible?"* | Vigía decide según protocolo deny-by-default: si después de 30s sin respuesta del cuidador y el firewall no autorizó transferencia, toma mensaje y hangup. Default conservador. |
 | *"¿Cómo escalan a 100k usuarios?"* | Twilio Voice escala horizontalmente. Backend stateless excepto Supabase. Costo por minuto Twilio + Deepgram + Claude Sonnet hace que el modelo de negocio funcione con USD 4-8/mes por persona protegida. |

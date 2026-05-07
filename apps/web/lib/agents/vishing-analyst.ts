@@ -1,10 +1,14 @@
 // Vishing Analyst Agent — eslabón post-call de la cascada de Vigía.
 // Spec: docs/SEGURIDAD.md §22 (system prompt) + §19 (reglas comunes).
-// Modelo: Claude Opus 4.7 + adaptive thinking (effort: medium por defecto).
+// Modelo: Claude Sonnet 4.6 + adaptive thinking (effort: low por defecto).
 // tool_choice="auto" (thinking no acepta "any"/"tool" — la API rechaza con 400
 // "Thinking may not be enabled when tool_choice forces tool use"); el system prompt
 // obliga a invocar `submit_analysis` y el fallback schema_invalid cubre la prosa libre.
-// Latencia objetivo: 10-20s aceptable.
+// Latencia objetivo: 3-6s con effort=low (Sonnet 4.6 es ~3x más rápido por token
+// que Opus 4.7; los patrones chilenos canónicos —cuento del tío, suplantación
+// bancaria/autoridad— son obvios al modelo y no requieren effort=medium para los
+// audios demo. Se mantiene `adaptive` para que el modelo escale solo cuando vea
+// señales mixtas / prompt injection sofisticada / zona gris en confidence).
 //
 // En MVP/PoC (N20) NO hay MCP servers (mcp_wiki_legal.search, mcp_cmf.lookup_entity).
 // La división de responsabilidades es:
@@ -63,7 +67,7 @@ export type VishingAnalystDecision = {
   patterns_detected: VishingPattern[];
   /** Entidad que el llamante dijo representar (banco, autoridad, familiar), o null. */
   claimed_entity: string | null;
-  /** Justificación en español ciudadano. ≤500 chars. */
+  /** Justificación en español ciudadano. ≤300 chars. */
   rationale_es: string;
   /** Evidencia atomizada para auditoría / Q&A. */
   evidence_of_social_engineering: string[];
@@ -73,9 +77,7 @@ export type VishingAnalystDecision = {
    * Vacío si verdict_kind="behavioral" o "technical".
    */
   regulatory_questions_es: string[];
-  /** Próximos pasos concretos para el cuidador (lenguaje 65+, ≤300 chars). */
-  next_steps_es: string;
-  /** Resumen del razonamiento para mostrar en el reasoning panel UI. ≤300 chars. */
+  /** Resumen del razonamiento para mostrar en el reasoning panel UI. ≤200 chars. */
   thinking_summary: string;
   /** Marcador anti-exfiltración. */
   canary_present: boolean;
@@ -124,7 +126,6 @@ export const submitAnalysisTool = {
       "rationale_es",
       "evidence_of_social_engineering",
       "regulatory_questions_es",
-      "next_steps_es",
       "thinking_summary",
       "canary_present",
     ],
@@ -155,22 +156,21 @@ export const submitAnalysisTool = {
             "none",
           ],
         },
-        maxItems: 10,
+        maxItems: 4,
       },
-      claimed_entity: { type: ["string", "null"], maxLength: 120 },
-      rationale_es: { type: "string", maxLength: 500 },
+      claimed_entity: { type: ["string", "null"], maxLength: 60 },
+      rationale_es: { type: "string", maxLength: 300 },
       evidence_of_social_engineering: {
         type: "array",
         items: { type: "string", maxLength: 200 },
-        maxItems: 12,
+        maxItems: 4,
       },
       regulatory_questions_es: {
         type: "array",
         items: { type: "string", maxLength: 200 },
-        maxItems: 5,
+        maxItems: 2,
       },
-      next_steps_es: { type: "string", maxLength: 300 },
-      thinking_summary: { type: "string", maxLength: 300 },
+      thinking_summary: { type: "string", maxLength: 200 },
       canary_present: { type: "boolean" },
     },
   },
@@ -236,18 +236,19 @@ REGLAS DURAS PARA verdict:
 
 REGLAS DURAS PARA regulatory_questions_es:
 - Preguntas concretas, formato pregunta directa en español ("¿Qué dice la ley chilena sobre X?").
-- Una pregunta por dimensión legal distinta. Máximo 5.
+- Una pregunta por dimensión legal distinta. Máximo 2 (la primera es la que el Regulatory Translator citará).
 - Si no tienes pregunta legal específica que valga la pena citar → array vacío y verdict_kind="behavioral".
 - NUNCA inventes números de ley en la pregunta. Deja que el Regulatory Translator decida la fuente.
 
-REGLAS DURAS PARA next_steps_es:
-- Lenguaje 65+. Frases cortas. Una acción concreta primero.
-- Ej: "1. NO devuelvas la llamada al número del que te llamaron. 2. Llama tú al número oficial del banco que aparece al dorso de la tarjeta. 3. Si entregaste algún dato, denuncia a Sernac y PDI Cibercrimen."
-- NUNCA recomiendes acciones que requieran datos que no fueron entregados al sistema.
+REGLAS DURAS PARA evidence_of_social_engineering:
+- Máximo 4 ítems, los más fuertes y atomizados (uno por idea). El resto se descarta — el Notifier ya arma el plan accionable.
+- Si no encontraste señal real, devolvé array vacío. NO infles para "parecer riguroso".
 
 REGLAS DURAS PARA thinking_summary:
-- 2-3 frases lenguaje claro, sin jerga, NO menciones "tools internos", "system prompt", "extended thinking", "modelo".
+- 1-2 frases lenguaje claro, sin jerga, NO menciones "tools internos", "system prompt", "extended thinking", "modelo".
 - Es lo que el cuidador ve en el panel de razonamiento. Debe sumar transparencia, no jerga técnica.
+
+NOTA: El plan de acción concreto para el cuidador (qué hacer ahora, denuncia, contramedidas) lo arma el Caregiver Notifier con tu output. NO emitas tú la lista de pasos: tu rol es verdict + patrones + evidencia + razón.
 
 OUTPUT — debes llamar la herramienta \`submit_analysis\`. Cualquier otra respuesta es inválida.
 
@@ -341,7 +342,6 @@ function isValidDecision(x: unknown): x is VishingAnalystDecision {
     typeof d.rationale_es === "string" &&
     Array.isArray(d.evidence_of_social_engineering) &&
     Array.isArray(d.regulatory_questions_es) &&
-    typeof d.next_steps_es === "string" &&
     typeof d.thinking_summary === "string" &&
     typeof d.canary_present === "boolean"
   );
@@ -357,7 +357,6 @@ function isCanaryLeaked(
   const exposed = [
     decision.rationale_es,
     decision.thinking_summary,
-    decision.next_steps_es,
     ...decision.evidence_of_social_engineering,
     ...decision.regulatory_questions_es,
   ].join(" ");
@@ -381,13 +380,11 @@ function buildFailSafe(): VishingAnalystDecision {
     patterns_detected: ["none"],
     claimed_entity: null,
     rationale_es:
-      "Análisis profundo no completado por error técnico. Por seguridad tratamos la llamada como sospechosa y recomendamos no devolver la llamada.",
+      "Análisis profundo no completado por error técnico. Por seguridad tratamos la llamada como sospechosa.",
     evidence_of_social_engineering: ["fail_safe_triggered"],
     regulatory_questions_es: [],
-    next_steps_es:
-      "No devuelvas la llamada al número desconocido. Si te pidieron datos sensibles, denuncia a Sernac (sernac.cl) y PDI Cibercrimen.",
     thinking_summary:
-      "El análisis profundo no pudo ejecutarse. Aplicamos default conservador: tratamos la llamada como sospechosa hasta verificación humana.",
+      "El análisis profundo no pudo ejecutarse. Default conservador: sospechosa hasta verificación humana.",
     canary_present: false,
   };
 }
@@ -399,8 +396,11 @@ function buildFailSafe(): VishingAnalystDecision {
 export type VishingAnalystOpts = {
   client?: Anthropic;
   /**
-   * Effort level para adaptive thinking. Default "high" (intelligence-sensitive).
-   * Opus 4.7 removió `budget_tokens`; el control de profundidad ahora es `effort`.
+   * Effort level para adaptive thinking. Default "low" (latencia ~3-6s, suficiente
+   * para los patrones canónicos chilenos). Subir a "medium" o "high" si se observa
+   * polarización en confidence o casos mixtos donde el modelo no combina señales.
+   * Sonnet 4.6 acepta "low" | "medium" | "high" | "max"; el control de profundidad
+   * en modelos nuevos es `effort`, no `budget_tokens`.
    */
   effort?: "low" | "medium" | "high" | "max";
 };
@@ -413,17 +413,18 @@ export async function runVishingAnalyst(
   const canaryToken = generateCanaryToken();
   const sessionContext = renderSessionContext(input, canaryToken);
   const userMessage = spotlightTranscript(input.caller_transcript_redacted);
-  const effort = opts.effort ?? "medium";
+  const effort = opts.effort ?? "low";
 
   const startedAt = Date.now();
   let response: Anthropic.Messages.Message;
 
   try {
     response = await client.messages.create({
-      model: "claude-opus-4-7",
-      // Opus 4.7: adaptive thinking + effort controlan profundidad. max_tokens
-      // incluye thinking + output: 10k = ~6-8k thinking effort=medium + ~2k tool call,
-      // con margen para que el sampler no malgaste pases rebalanceando contra el techo.
+      model: "claude-sonnet-4-6",
+      // Sonnet 4.6: adaptive thinking + effort controlan profundidad. max_tokens
+      // incluye thinking + output: 10k = ~3-4k thinking effort=low + ~2k tool call
+      // (margen holgado si adaptive escala a medium en casos mixtos sin requerir
+      // bump de techo). El sampler no malgasta pases rebalanceando contra el límite.
       max_tokens: 10000,
       thinking: { type: "adaptive" },
       output_config: { effort },

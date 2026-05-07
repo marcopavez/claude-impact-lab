@@ -15,20 +15,6 @@ export type GenerateAudioOptions = {
   seed?: number;
 };
 
-export type TranscribeAudioOptions = {
-  languageCode?: string;
-  diarize?: boolean;
-  numSpeakers?: number;
-  tagAudioEvents?: boolean;
-};
-
-export type TranscribeAudioResult = {
-  text: string;
-  languageCode?: string;
-  languageProbability?: number;
-  raw: unknown;
-};
-
 let cachedClient: ElevenLabsClient | null = null;
 
 function getClient(): ElevenLabsClient {
@@ -85,38 +71,6 @@ export async function generateAudio(
   });
 
   return streamToBuffer(stream);
-}
-
-export async function transcribeAudio(
-  input: Buffer | Blob | File,
-  options: TranscribeAudioOptions = {},
-): Promise<TranscribeAudioResult> {
-  const client = getClient();
-
-  const file: Blob =
-    input instanceof Blob
-      ? input
-      : new Blob([new Uint8Array(input)], { type: "audio/mpeg" });
-
-  const response = await client.speechToText.convert({
-    file,
-    modelId: "scribe_v1",
-    languageCode: options.languageCode ?? "es",
-    diarize: options.diarize ?? false,
-    ...(options.numSpeakers !== undefined && { numSpeakers: options.numSpeakers }),
-    tagAudioEvents: options.tagAudioEvents ?? false,
-  });
-
-  const r = response as unknown as Record<string, unknown>;
-  return {
-    text: typeof r.text === "string" ? r.text : "",
-    languageCode: typeof r.languageCode === "string" ? r.languageCode : undefined,
-    languageProbability:
-      typeof r.languageProbability === "number"
-        ? r.languageProbability
-        : undefined,
-    raw: response,
-  };
 }
 
 export type SpanishVoice = {

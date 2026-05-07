@@ -328,7 +328,7 @@ export function ContactsManager({ initial }: Props) {
             productionNote:
               "En producción: Contacts Picker API (Android Chrome) con permiso explícito por contacto, o cargar un archivo de contactos .vcf.",
           }}
-          empty="Aún no hay contactos confiables. Importá tu agenda para comenzar."
+          empty="Aún no hay contactos confiables. Importa tu agenda para comenzar."
         >
           {whitelist.map((c) => (
             <li

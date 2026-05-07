@@ -2,6 +2,7 @@ import { UploadForm } from "../components/UploadForm";
 import { PoweredByClaudeBadge } from "../components/PoweredByClaudeBadge";
 import { FontSizeToggle } from "../components/FontSizeToggle";
 import { ContactsManager } from "../components/ContactsManager";
+import { RecentAnalysesPanel } from "../components/RecentAnalysesPanel";
 import { ShieldCheckIcon } from "../components/icons";
 import demoConfig from "../data/demo-config.json";
 import type {
@@ -112,6 +113,9 @@ export default function Page() {
 
         {/* Firewall de identidad — colapsable bajo el hero */}
         <ContactsManager initial={initialContacts} />
+
+        {/* Análisis recientes — solo se renderiza si hay ≥1 entry en IndexedDB */}
+        <RecentAnalysesPanel />
 
         {/* Form */}
         <UploadForm />

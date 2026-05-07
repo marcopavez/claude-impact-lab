@@ -79,7 +79,7 @@ function buildStages(result: AudioProcessSuccess): Stage[] {
   stages.push({
     id: "vishing",
     label: "Análisis profundo (razonamiento extendido)",
-    modelLabel: "Opus 4.7 + adaptive thinking",
+    modelLabel: "Sonnet 4.6 + adaptive thinking",
     ran: vishingRan,
     reasonNotRun: vishingRan
       ? undefined
@@ -158,10 +158,6 @@ export function CascadeTrace({ result }: { result: AudioProcessSuccess }) {
           </li>
         ))}
       </ol>
-      <p className="mt-3 text-xs text-[color:var(--color-text-subtle)] leading-relaxed">
-        Cada eslabón tiene un gate explícito en el orquestador: la cascada es
-        proporcional al riesgo del audio.
-      </p>
     </details>
   );
 }

@@ -32,15 +32,22 @@ import type {
   AudioProcessError,
   AudioProcessResponse,
   AudioProcessSuccess,
+  NotificationGenerateResponse,
 } from "../lib/api/audio-process.types";
 import {
   AUDIO_PROCESS_LIMITS,
   ERROR_MESSAGES_ES,
 } from "../lib/api/audio-process.types";
+import {
+  SAMPLE_AUDIOS,
+  SAMPLE_OUTCOME_LABEL_ES,
+  sampleAudioUrl,
+  type SampleAudio,
+} from "../data/sample-audios";
 import { LoadingState } from "./LoadingState";
 import { VerdictPanel } from "./VerdictPanel";
 import { ErrorState } from "./ErrorState";
-import { MicIcon, CloseIcon } from "./icons";
+import { MicIcon, CloseIcon, SparkleIcon } from "./icons";
 // MOCK: import del mock — se borra cuando el endpoint real esté en main.
 import {
   mockAudioProcessResponse,
@@ -50,7 +57,17 @@ import {
 type FormStatus =
   | { kind: "idle" }
   | { kind: "submitting" }
-  | { kind: "success"; result: AudioProcessSuccess }
+  | {
+      kind: "success";
+      result: AudioProcessSuccess;
+      /**
+       * Two-phase: cuando el primer response no trae caregiver_message (no fue
+       * early-exit), esperamos el segundo endpoint /api/notification/generate.
+       * El VerdictPanel renderiza el verdict y muestra spinner en el slot de
+       * "plan accionable" hasta que la segunda llamada complete.
+       */
+      caregiverPending: boolean;
+    }
   | { kind: "error"; error: AudioProcessError };
 
 type RecordingState =
@@ -61,8 +78,6 @@ type RecordingState =
 // Acepta E.164 internacional con foco chileno; permite rangos generales por
 // si el cuidador anota un fijo o número extranjero.
 const E164_RE = /^\+[1-9]\d{6,14}$/;
-
-const ACCEPT_ATTR = AUDIO_PROCESS_LIMITS.acceptedMimeTypes.join(",");
 
 /** Cap defensivo: la cascada apunta a <30s E2E; 90s de audio + Scribe ya estresa J3.3. */
 const MAX_RECORDING_MS = 90_000;
@@ -133,10 +148,8 @@ function preflightValidate(args: {
 
 export function UploadForm() {
   const formId = useId();
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [file, setFile] = useState<File | null>(null);
-  const [dragActive, setDragActive] = useState(false);
   const [consent, setConsent] = useState(false);
   const [callerId, setCallerId] = useState("");
   const [protectedName, setProtectedName] = useState("");
@@ -157,6 +170,11 @@ export function UploadForm() {
   const recordingTimerRef = useRef<number | null>(null);
   const autoStopTimerRef = useRef<number | null>(null);
 
+  // Cargando un sample: id en curso para mostrar spinner solo en ese botón.
+  // null cuando no hay carga activa.
+  const [loadingSampleId, setLoadingSampleId] = useState<string | null>(null);
+  const [sampleError, setSampleError] = useState<string | null>(null);
+
   // MOCK: lectura del flag a nivel render — se borra junto al import.
   const useMock = process.env.NEXT_PUBLIC_MOCK_AUDIO_PROCESS === "1";
 
@@ -173,35 +191,6 @@ export function UploadForm() {
     };
   }, [audioUrl]);
 
-  const handleFiles = useCallback((files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const next = files[0];
-    setFile(next);
-    setClientError(null);
-  }, []);
-
-  const onDrop = useCallback(
-    (e: React.DragEvent<HTMLLabelElement>) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setDragActive(false);
-      handleFiles(e.dataTransfer.files);
-    },
-    [handleFiles],
-  );
-
-  const onDragOver = useCallback((e: React.DragEvent<HTMLLabelElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(true);
-  }, []);
-
-  const onDragLeave = useCallback((e: React.DragEvent<HTMLLabelElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-  }, []);
-
   const reset = useCallback(() => {
     setFile(null);
     setConsent(false);
@@ -209,13 +198,11 @@ export function UploadForm() {
     setProtectedName("");
     setStatus({ kind: "idle" });
     setClientError(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
   const clearFile = useCallback(() => {
     setFile(null);
     setClientError(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
   // Libera tracks del mic + timers. Idempotente: la llamamos en stop, en
@@ -359,7 +346,6 @@ export function UploadForm() {
 
       setFile(recordedFile);
       setClientError(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
     });
 
     recorder.addEventListener("error", () => {
@@ -416,6 +402,41 @@ export function UploadForm() {
     }
   }, [releaseMicResources]);
 
+  // Carga un audio de muestra desde public/demo-audios/<id>.mp3 y lo deja
+  // en el state como si el cuidador lo hubiera subido. Acelera el demo en
+  // vivo y educa al usuario que no tiene audio propio. Autollena el caller_id
+  // sugerido para que el sample dispare el camino canónico del firewall.
+  const loadSample = useCallback(async (sample: SampleAudio) => {
+    if (loadingSampleId !== null) return;
+    setSampleError(null);
+    setRecordingError(null);
+    setClientError(null);
+    setLoadingSampleId(sample.id);
+    try {
+      const res = await fetch(sampleAudioUrl(sample.id));
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      if (blob.size === 0) {
+        throw new Error("Archivo vacío");
+      }
+      const sampleFile = new File([blob], `${sample.id}.mp3`, {
+        type: sample.mime,
+      });
+      setFile(sampleFile);
+      setCallerId(sample.suggested_caller_id);
+    } catch (err) {
+      setSampleError(
+        err instanceof Error
+          ? `No pudimos cargar el audio de muestra: ${err.message}.`
+          : "No pudimos cargar el audio de muestra.",
+      );
+    } finally {
+      setLoadingSampleId(null);
+    }
+  }, [loadingSampleId]);
+
   // Cleanup al desmontar: detener recorder + liberar tracks + cancelar timers.
   useEffect(() => {
     return () => {
@@ -453,7 +474,8 @@ export function UploadForm() {
         const scenario = inferScenarioFromName(file?.name ?? "");
         await new Promise((r) => setTimeout(r, 9000));
         const result = mockAudioProcessResponse(scenario);
-        setStatus({ kind: "success", result });
+        // El mock ya trae caregiver_message lleno → no hay segundo fetch pendiente.
+        setStatus({ kind: "success", result, caregiverPending: false });
         return;
       }
 
@@ -471,14 +493,85 @@ export function UploadForm() {
           body: formData,
         });
 
-        // El endpoint puede responder JSON tanto en éxito como error;
-        // toleramos cualquier status code y miramos el shape.
         const json = (await res.json()) as AudioProcessResponse;
 
-        if (json.ok) {
-          setStatus({ kind: "success", result: json });
-        } else {
+        if (!json.ok) {
           setStatus({ kind: "error", error: json });
+          return;
+        }
+
+        // Two-phase: si el primer response YA trae caregiver_message (early-exit
+        // del firewall, donde el plan es determinístico), no disparamos segundo
+        // fetch. En el caso normal de cascada Claude, mostramos el verdict
+        // inmediatamente y disparamos /api/notification/generate en background.
+        const needsSecondPhase = !json.caregiver_message;
+        setStatus({
+          kind: "success",
+          result: json,
+          caregiverPending: needsSecondPhase,
+        });
+
+        if (needsSecondPhase) {
+          void (async () => {
+            try {
+              const notifRes = await fetch("/api/notification/generate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  audio_id: json.audio_id,
+                  protected_name:
+                    protectedName.trim() ||
+                    AUDIO_PROCESS_LIMITS.defaultProtectedName,
+                  triage_decision: json.decision,
+                  identity_decision: json.identity_check,
+                  vishing_decision: json.vishing_analysis,
+                  regulatory_decision: json.regulatory,
+                }),
+              });
+              const notifJson =
+                (await notifRes.json()) as NotificationGenerateResponse;
+
+              setStatus((prev) => {
+                if (prev.kind !== "success") return prev;
+                if (!notifJson.ok) {
+                  // Falla del segundo phase: el verdict ya está visible, así que
+                  // dejamos pendingCaregiver=false sin caregiver_message. El VerdictPanel
+                  // muestra fallback "plan accionable no disponible".
+                  return { ...prev, caregiverPending: false };
+                }
+                return {
+                  ...prev,
+                  caregiverPending: false,
+                  result: {
+                    ...prev.result,
+                    caregiver_message: notifJson.caregiver_message,
+                    models_used: [
+                      ...prev.result.models_used,
+                      ...notifJson.models_used,
+                    ],
+                    tools_used: [
+                      ...prev.result.tools_used,
+                      ...notifJson.tools_used,
+                    ],
+                    cascade_statuses: {
+                      ...prev.result.cascade_statuses,
+                      notifier: notifJson.status,
+                    },
+                    latency_ms: {
+                      ...prev.result.latency_ms,
+                      notifier_ms: notifJson.latency_ms,
+                    },
+                  },
+                };
+              });
+            } catch {
+              setStatus((prev) =>
+                prev.kind === "success"
+                  ? { ...prev, caregiverPending: false }
+                  : prev,
+              );
+            }
+          })();
         }
       } catch {
         setStatus({
@@ -503,7 +596,13 @@ export function UploadForm() {
   }
 
   if (status.kind === "success") {
-    return <VerdictPanel result={status.result} onReset={reset} />;
+    return (
+      <VerdictPanel
+        result={status.result}
+        onReset={reset}
+        caregiverPending={status.caregiverPending}
+      />
+    );
   }
 
   if (status.kind === "error") {
@@ -524,80 +623,89 @@ export function UploadForm() {
           id="upload-heading"
           className="text-2xl font-semibold text-[color:var(--color-text)]"
         >
-          Sube el audio sospechoso
+          Prueba Vigía con un audio
         </h2>
         <p className="text-base text-[color:var(--color-text-muted)]">
-          Vigía analiza la grabación y te dice si la llamada es legítima o si
-          es una estafa. Aceptamos archivos MP3, M4A, WAV o WebM, hasta 10 MB.
+          Elige uno de los tres ejemplos para ver cómo Vigía responde a cada
+          tipo de llamada, o graba uno con el micrófono de este dispositivo.
         </p>
       </div>
 
-      {/* ================== Zona drag-and-drop + file input ================== */}
+      {/* ================== Audio a analizar ================== */}
       <fieldset className="border-0 p-0 m-0">
-        <legend className="label-strong">Archivo de audio</legend>
+        <legend className="label-strong">Audio a analizar</legend>
 
-        <label
-          htmlFor={`${formId}-file`}
-          className="dropzone"
-          data-active={dragActive ? "true" : "false"}
-          aria-disabled={isRecording || isRequestingMic ? "true" : undefined}
-          onDragOver={isRecording || isRequestingMic ? undefined : onDragOver}
-          onDragEnter={isRecording || isRequestingMic ? undefined : onDragOver}
-          onDragLeave={isRecording || isRequestingMic ? undefined : onDragLeave}
-          onDrop={isRecording || isRequestingMic ? undefined : onDrop}
-          style={
-            isRecording || isRequestingMic
-              ? { opacity: 0.6, pointerEvents: "none" }
-              : undefined
-          }
-        >
-          <MicIcon
-            className="w-12 h-12 text-[color:var(--color-brand)]"
-          />
-          {file ? (
-            <span className="text-[color:var(--color-text)] font-semibold text-lg">
-              {file.name}{" "}
-              <span className="font-normal text-[color:var(--color-text-subtle)]">
-                ({formatBytes(file.size)})
-              </span>
-            </span>
-          ) : (
-            <>
-              <span className="text-[color:var(--color-text)] font-semibold text-lg">
-                Arrastra el audio aquí
-              </span>
-              <span className="text-base text-[color:var(--color-text-muted)]">
-                o toca para elegirlo desde tu teléfono o computador
-              </span>
-            </>
-          )}
-          <input
-            ref={fileInputRef}
-            id={`${formId}-file`}
-            type="file"
-            accept={ACCEPT_ATTR}
-            className="sr-only"
-            onChange={(e) => handleFiles(e.target.files)}
-            aria-describedby={`${formId}-file-help`}
-            required
-          />
-        </label>
-        <p
-          id={`${formId}-file-help`}
-          className="mt-2 text-sm text-[color:var(--color-text-subtle)]"
-        >
-          Máximo 10 MB. Los formatos compatibles son MP3, M4A, WAV y WebM.
-        </p>
+        {/* ==== Audios de muestra — opción principal para demo en vivo ==== */}
+        <div className="mt-2 flex flex-col gap-3">
+          <p
+            id={`${formId}-samples-help`}
+            className="text-sm text-[color:var(--color-text-subtle)]"
+          >
+            Toca un ejemplo y luego &ldquo;Analizar audio&rdquo;.
+          </p>
+          <ul
+            className="grid grid-cols-1 sm:grid-cols-3 gap-3"
+            aria-describedby={`${formId}-samples-help`}
+          >
+            {SAMPLE_AUDIOS.map((sample) => {
+              const isLoading = loadingSampleId === sample.id;
+              const isDisabled =
+                isRecording ||
+                isRequestingMic ||
+                (loadingSampleId !== null && !isLoading);
+              return (
+                <li key={sample.id}>
+                  <button
+                    type="button"
+                    onClick={() => void loadSample(sample)}
+                    disabled={isDisabled}
+                    className="w-full h-full text-left p-3 rounded border-2 border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] hover:border-[color:var(--color-brand)] focus:outline-none focus:border-[color:var(--color-brand)] focus:ring-2 focus:ring-[color:var(--color-brand)]/30 disabled:opacity-60 disabled:cursor-not-allowed transition-colors flex flex-col gap-1.5"
+                    aria-label={`Cargar audio de ejemplo: ${sample.label}. ${sample.description}`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <SparkleIcon className="w-4 h-4 text-[color:var(--color-brand)]" />
+                      <span className="font-semibold text-[color:var(--color-text)]">
+                        {sample.label}
+                      </span>
+                      {isLoading ? (
+                        <span
+                          className="ml-auto text-xs text-[color:var(--color-text-subtle)]"
+                          aria-live="polite"
+                        >
+                          cargando…
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="text-sm text-[color:var(--color-text-muted)] leading-snug">
+                      {sample.description}
+                    </span>
+                    <span className="text-[10px] uppercase tracking-wide font-semibold text-[color:var(--color-text-subtle)]">
+                      {SAMPLE_OUTCOME_LABEL_ES[sample.expected_outcome]}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {sampleError ? (
+            <p
+              role="alert"
+              className="rounded-md border-l-4 border-[color:var(--color-danger)] bg-[var(--color-danger-bg)] px-4 py-3 text-[color:var(--color-danger)] font-semibold"
+            >
+              {sampleError}
+            </p>
+          ) : null}
+        </div>
 
-        {/* ==== Grabación con micrófono — alternativa al upload ==== */}
-        <div className="mt-4 flex flex-col gap-3">
+        {/* ==== Grabación con micrófono — alternativa secundaria ==== */}
+        <div className="mt-5 flex flex-col gap-3">
           <div className="flex items-center gap-3">
             <span
               aria-hidden="true"
               className="h-px flex-1 bg-[var(--color-border)]"
             />
             <span className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-subtle)]">
-              o
+              o graba uno propio
             </span>
             <span
               aria-hidden="true"
@@ -612,7 +720,6 @@ export function UploadForm() {
               disabled={isRequestingMic}
               className="btn-secondary"
               aria-label="Grabar audio en vivo desde el micrófono del dispositivo"
-              aria-describedby={`${formId}-mic-help`}
             >
               <MicIcon className="w-5 h-5" aria-hidden="true" />
               <span>
@@ -620,7 +727,7 @@ export function UploadForm() {
                   ? "Pidiendo permiso del micrófono..."
                   : file
                     ? "Grabar otro audio con el micrófono"
-                    : "Grabar ahora con el micrófono"}
+                    : "Grabar con el micrófono"}
               </span>
             </button>
           ) : (
@@ -658,14 +765,6 @@ export function UploadForm() {
               </button>
             </div>
           )}
-
-          <p
-            id={`${formId}-mic-help`}
-            className="text-sm text-[color:var(--color-text-subtle)]"
-          >
-            La grabación se procesa igual que un archivo subido: se transcribe,
-            se analiza y se descarta. Vigía no la guarda.
-          </p>
 
           {recordingError ? (
             <p
@@ -849,12 +948,6 @@ export function UploadForm() {
 // ============================================================
 // Helpers
 // ============================================================
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
-}
 
 /**
  * Mock-only: deduce el escenario desde el nombre del archivo para que la demo

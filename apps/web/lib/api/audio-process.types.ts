@@ -223,6 +223,67 @@ export type AudioProcessError = {
 export type AudioProcessResponse = AudioProcessSuccess | AudioProcessError;
 
 // ============================================================
+// /api/notification/generate — segunda fase del flujo
+// ============================================================
+//
+// Two-phase endpoint pattern: el primer call (/api/audio/process) detecta y
+// devuelve verdict + evidence + denuncia + redirect; el cliente renderiza eso
+// inmediatamente y dispara este segundo call para que Claude Haiku 4.5 arme el
+// mensaje 65+ accionable. Mientras ese segundo call corre, el panel "plan de
+// acción" muestra spinner.
+//
+// Stateless: el cliente reenvía el contexto necesario (decisiones de la
+// cascada + transcripción usada para derivar severity). Sin DB, sin sesión.
+// Si el primer response ya trae caregiver_message (early-exit firewall), el
+// cliente NO dispara este endpoint — el mensaje ya está completo y determinístico.
+
+export type NotificationGenerateRequest = {
+  /** Echo del audio_id del primer response, para correlación de logs. */
+  audio_id: string;
+  /** Primer nombre de la persona protegida (mismo que se mandó al primer endpoint). */
+  protected_name: string;
+  /** Decisión completa del Triage (siempre presente). */
+  triage_decision: CallTriageDecision;
+  /** Identity Verifier decision (si Triage delegó). */
+  identity_decision?: IdentityVerifierDecision;
+  /** Vishing Analyst decision (si la cascada gatilló análisis profundo). */
+  vishing_decision?: VishingAnalystDecision;
+  /** Regulatory Translator decision (si Vishing pidió citas regulatorias). */
+  regulatory_decision?: RegulatoryTranslatorDecision;
+};
+
+export type NotificationGenerateSuccess = {
+  ok: true;
+  audio_id: string;
+  caregiver_message: CaregiverNotifierDecision;
+  /** Status del Notifier (ok / fallback con reason). */
+  status: CascadeStageStatus<CaregiverNotifierFailReason>;
+  /** Modelos invocados (refuerza M3 / B3). */
+  models_used: string[];
+  /** Tools/clientes invocados (B2). */
+  tools_used: string[];
+  latency_ms: number;
+  /** Marcador anti-exfiltración. */
+  canary_present: boolean;
+};
+
+export type NotificationGenerateErrorCode =
+  | "INVALID_BODY"
+  | "MISSING_TRIAGE"
+  | "NOTIFIER_FAILED"
+  | "INTERNAL_ERROR";
+
+export type NotificationGenerateError = {
+  ok: false;
+  error: string;
+  code: NotificationGenerateErrorCode;
+};
+
+export type NotificationGenerateResponse =
+  | NotificationGenerateSuccess
+  | NotificationGenerateError;
+
+// ============================================================
 // Helpers para el frontend
 // ============================================================
 
