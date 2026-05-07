@@ -30,6 +30,7 @@ import {
   CONFIDENCE_LABEL_ES,
 } from "../lib/api/audio-process.types";
 import { CaregiverRedirectCard } from "./CaregiverRedirectCard";
+import { CascadeTrace } from "./CascadeTrace";
 import { CounterScriptCard } from "./CounterScriptCard";
 import { DenunciaCard } from "./DenunciaCard";
 import { EarlyExitBanner } from "./EarlyExitBanner";
@@ -503,6 +504,9 @@ export function VerdictPanel({ result, onReset }: Props) {
           ) : null}
         </section>
         ) : null}
+
+        {/* ================== Cascada agéntica — trazabilidad de qué corrió ================== */}
+        <CascadeTrace result={result} />
 
         {/* ================== Análisis profundo (Vishing Analyst) ================== */}
         {result.vishing_analysis ? (
