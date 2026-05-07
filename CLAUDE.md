@@ -39,9 +39,9 @@ Lo que **NO se sacrifica**: cascada agéntica completa, citation validator post-
 | SDK | `@anthropic-ai/sdk` TypeScript | Mismo lenguaje frontend ↔ backend ↔ tools. Skill `claude-api` aplicable. |
 | Patrón agéntico | Cascada **Call Triage → Identity Verifier → Regulatory Translator → Vishing Analyst → Notifier** con `tool_choice: required` por agente. | M3 mide arquitectura agéntica; cascada Triage rápido + Analyst lento es defendible y auditable. ~10-15 calls Claude por audio procesado → sostiene B3 sobradamente. |
 | Audio input | **Audios pre-grabados subidos a la PWA** (drag-and-drop, MP3/M4A/WAV ≤60s) | N19/N20: cero infra telefónica. La cascada procesa el audio en ~30s y entrega verdict + render en pantalla. Phone-first vivo = V2. |
-| STT | **ElevenLabs Scribe v1** batch (modelo `scribe_v1`) | Marco tiene API key + suscripción. Latencia 5-15s para audio 60s — bajo el umbral J3.3 (<30s) sub-check. Español multi-acento incluyendo Chile. NO Deepgram, NO whisper.cpp en MVP. |
+| STT | **Groq · Whisper Large v3 Turbo** (endpoint OpenAI-compatible, modelo `whisper-large-v3-turbo`) | N21 (2026-05-07): switch desde ElevenLabs Scribe. Latencia <1s típica para audio ≤60s vs. 5-15s de Scribe — saca al STT del path crítico de J3.3. Whisper Large v3 soporta es-CL. Groq es STT (no LLM de razonamiento) → misma categoría I/O sensorial que Scribe, no rompe "Claude motor principal". NO Deepgram, NO whisper.cpp, NO Whisper-vía-OpenAI en MVP. |
 | TTS | **ElevenLabs TTS** (modelo `eleven_v3`, voz es-CL) | Doble uso: (1) generar los 3 audios demo (cuento del tío, banco oficial, familiar legítimo, ≤60s c/u); (2) opcional reproducir verdict hablado en PWA para accesibilidad 65+. NO Twilio Polly. |
-| Backend | **Next.js 16 API route `/api/audio/process`** (Vercel serverless) | Stateless: parse multipart → ElevenLabs Scribe → cascada → response JSON. Audio buffer en memoria por request, descarte tras response. **Cero DB, cero storage.** |
+| Backend | **Next.js 16 API route `/api/audio/process`** (Vercel serverless) | Stateless: parse multipart → Groq Whisper → cascada → response JSON. Audio buffer en memoria por request, descarte tras response. **Cero DB, cero storage.** |
 | Persistencia | **Ninguna en MVP.** Audio en memoria por request; verdict devuelto al cliente y renderizado. | Cero PII en reposo es ventaja regulatoria, no carencia. Postgres + pgvector + Storage = V2. |
 | Auth | **Sin auth en MVP.** PWA single-page demo público. | Auth + cuentas multi-cuidador = V2. Para el demo del Lab no aporta. |
 | Fuentes regulatorias | **JSON estático** en `apps/web/data/sources/*.json` con quotes pre-extraídos + **fetch HTTP** en caliente sobre URLs canónicas para el post-validator | Sin RAG vectorial, sin pgvector, sin Voyage. Las ~7 fuentes oficiales son finitas y conocidas; el snapshot estático es defendible y auditable; el fetch en vivo cubre el post-validator A6. |
@@ -53,7 +53,8 @@ Lo que **NO se sacrifica**: cascada agéntica completa, citation validator post-
 **Decisiones que NO tomamos (y por qué):**
 - **Twilio Voice + Media Streams** → N19/N20: KYC DID Chile incierto + complejidad WebSocket µ-law vs. ventana ~20h. **Roadmap V2.**
 - **Twilio SMS** → N20: no hay backend que mantenga sesiones de notificación. SMS = V2.
-- **Deepgram** → N19: ElevenLabs Scribe cubre el caso (batch, no streaming). Marco tiene API key.
+- **Deepgram** → N19: descartado por streaming no necesario (audio-first batch). Reemplazado primero por Scribe (N19), luego por Groq Whisper Large v3 Turbo (N21).
+- **ElevenLabs Scribe v1** → N21 (2026-05-07): reemplazado por Groq Whisper Large v3 Turbo. Razón: 5-15s de Scribe para audio ≤60s era ~30-40% del budget E2E; Groq baja eso a <1s. ElevenLabs queda solo para TTS (eleven_v3) en `scripts/render-scams.ts`.
 - **Supabase (Postgres + pgvector + Auth + Storage)** → N20: el MVP es stateless; el snapshot JSON + fetch HTTP cubre A5/A6 sin DB. Persistencia + auth = V2.
 - **Voyage AI embeddings + RAG vectorial** → N20: las fuentes son finitas (~7 dominios oficiales); RAG aporta valor con corpus grande, no aquí. V2.
 - **Web Push (VAPID)** → N20: requiere persistir endpoints de subscription en server. Render en pantalla cumple para demo. V2.
@@ -61,7 +62,7 @@ Lo que **NO se sacrifica**: cascada agéntica completa, citation validator post-
 - **App nativa Android/iOS** → costo App Store review > beneficio MVP. PWA installable cumple. V2.
 - **Voice cloning detection** → estado del arte cambiante. Defensa real = factor de conocimiento (KBA + shared word, no clonables) + cross-channel out-of-band. Eso ya está.
 - **SIM card chileno físico** → no viable sin SIM gateway hardware en sprint 48h.
-- **Whisper de OpenAI** → conservador con la regla "Claude motor principal"; ElevenLabs Scribe es vendor neutro.
+- **Whisper vía OpenAI directo** → conservador con la regla "Claude motor principal" + dependencia directa de OpenAI como vendor de IA. Groq hostea Whisper (modelo abierto, MIT) en su propio hardware → no es OpenAI-as-a-service.
 - **Streaming bidireccional con interrupciones naturales** → no aplica MVP. V2 usaría turn-by-turn simple sobre Media Streams.
 - **LangChain/LangGraph** → abstracción especulativa que estorba el Q&A.
 - **GPT-4 / Gemini como motor** → **descalifica**.
@@ -120,7 +121,7 @@ La rúbrica oficial está en `docs/EVENT/RUBRICA.md`. Score final = **40% mentor
 
 ## Reglas críticas (descalificadores y penalizaciones)
 
-- **Claude motor principal.** Sin uso real verificado en consola Anthropic durante la ventana → descalificación. Otros LLMs como base → descalificados. **ElevenLabs Scribe solo STT, ElevenLabs TTS solo TTS** — componentes I/O sensoriales no-LLM. Cero LLM-as-a-Service externo en cualquier capa de razonamiento.
+- **Claude motor principal.** Sin uso real verificado en consola Anthropic durante la ventana → descalificación. Otros LLMs como base → descalificados. **Groq Whisper solo STT, ElevenLabs TTS solo TTS** — componentes I/O sensoriales no-LLM (Whisper es modelo de transcripción, no de razonamiento; Groq es la infraestructura de inference). Cero LLM-as-a-Service externo en cualquier capa de razonamiento.
 - **Construido en la ventana.** Código y consola Anthropic con mensajes fuera de la ventana no cuentan para B3.
 - **Cero re-identificación de datasets.** No intentar des-anonimizar PhishTank, URLhaus, CMF, Subtel.
 - **Cero plagio.** Toda decisión arquitectónica documentada y defendible en Q&A.
@@ -171,7 +172,9 @@ La rúbrica oficial está en `docs/EVENT/RUBRICA.md`. Score final = **40% mentor
 
 ## Decisiones de seguridad cerradas
 
-Las decisiones N1–N20 están confirmadas y documentadas en `docs/SEGURIDAD.md` §31. Cualquier cambio requiere actualizar `SEGURIDAD.md` + memoria + revisión por pares. Resumen no exhaustivo:
+Las decisiones N1–N21 están confirmadas y documentadas en `docs/SEGURIDAD.md` §31. Cualquier cambio requiere actualizar `SEGURIDAD.md` + memoria + revisión por pares. Resumen no exhaustivo:
+
+- **N21 (2026-05-07) Switch STT a Groq Whisper Large v3 Turbo.** ElevenLabs Scribe v1 (5-15s para audio ≤60s) era ~30-40% del budget E2E; Groq Whisper Large v3 Turbo entrega <1s típico sobre el mismo input. Reformula N7 (STT pasa de Scribe a Groq Whisper). ElevenLabs sigue activa **solo para TTS** (`eleven_v3` en `scripts/render-scams.ts`). Misma categoría I/O sensorial — no toca la regla "Claude motor principal" ni la cascada agéntica. `.env.local` requiere `GROQ_API_KEY` (https://console.groq.com/keys, free tier suficiente para los ~9 calls del demo).
 
 - **N20 (2026-05-06) Pivote Lean MVP/PoC.** "Algo funcional > arquitectónicamente correcto". Sin Twilio (Voice/SMS), sin Deepgram, sin DB (Supabase Postgres + pgvector + Storage), sin auth (magic link), sin Web Push persistido, sin WhatsApp Cloud, sin RAG vectorial Voyage. Servidor stateless, audio en memoria, fuentes en JSON estático, config demo hardcoded, render en pantalla. Reformula N9/N10/N11/N13/N15. Reemplaza N17, N18. Hace obsoletas para MVP el bloque de persistencia + RAG. Intactas: cascada agéntica completa, citation validator, PII redaction, threat model V1-V22.
 - **N19 (2026-05-06) Pivote audio-first MVP.** Audios pre-grabados en lugar de llamadas en vivo. Reformula N1/N5/N11/N13. Reemplaza N2 (Twilio Voice→sin telefonía MVP), N3/N7 (Deepgram→ElevenLabs Scribe), N8 (Polly→ElevenLabs TTS), N9 (call forwarding→audio upload PWA). Hace obsoleta N12. Traslada canal de N10 (consentimiento). Phone-first vivo es V2.
@@ -183,4 +186,4 @@ Las decisiones N1–N20 están confirmadas y documentadas en `docs/SEGURIDAD.md`
 - Bias defensivo explícito en Call Triage system prompt.
 - Sin voice cloning detection (out of scope).
 - PWA installable, no nativa.
-- STT ElevenLabs Scribe + TTS ElevenLabs (Marco tiene API key + suscripción).
+- STT Groq Whisper Large v3 Turbo (post-N21) + TTS ElevenLabs `eleven_v3` (Marco tiene API key + suscripción).

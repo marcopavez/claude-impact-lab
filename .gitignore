@@ -5,6 +5,7 @@ desktop.ini
 
 # Claude Code local (no compartir)
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # IDE
 .vscode/

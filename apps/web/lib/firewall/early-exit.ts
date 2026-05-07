@@ -3,7 +3,7 @@
 // El módulo cruza el caller_id que llega al endpoint /api/audio/process contra
 // la blacklist y la whitelist de data/demo-config.json. Si hay match, el
 // orquestador corta la cascada: NO se transcribe el audio, NO se llama a Claude,
-// NO se factura ElevenLabs. La respuesta se construye determinísticamente acá.
+// NO se factura Groq. La respuesta se construye determinísticamente acá.
 //
 // Por qué corto incluso para whitelist `pass_after_verification`: para que el
 // mock se sienta coherente al jurado en la demo. La defensa contra V22 (caller-ID
@@ -289,7 +289,7 @@ export function buildEarlyExitSuccess(args: {
     triage: { ok: true },
   };
 
-  // Sin Claude ni Scribe — el match es local y determinista. La UI muestra
+  // Sin Claude ni Whisper — el match es local y determinista. La UI muestra
   // explícitamente "firewall.local" para no inducir al jurado a creer que la
   // decisión vino de un modelo.
   const modelsUsed = ["firewall.local"];

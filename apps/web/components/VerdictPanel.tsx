@@ -29,9 +29,15 @@ import {
   CONFIDENCE_DESCRIPTION_ES,
   CONFIDENCE_LABEL_ES,
 } from "../lib/api/audio-process.types";
+import {
+  addToHistory,
+  type HistoryEntry,
+  type HistoryVerdict,
+} from "../lib/storage/history";
 import { CaregiverRedirectCard } from "./CaregiverRedirectCard";
 import { CascadeTrace } from "./CascadeTrace";
 import { CounterScriptCard } from "./CounterScriptCard";
+import { DamageControlCard } from "./DamageControlCard";
 import { DenunciaCard } from "./DenunciaCard";
 import { EarlyExitBanner } from "./EarlyExitBanner";
 import { PersonalBlacklistButton } from "./PersonalBlacklistButton";
@@ -51,6 +57,15 @@ import {
 type Props = {
   result: AudioProcessSuccess;
   onReset: () => void;
+  /**
+   * Two-phase: cuando es true, el verdict + evidencia + denuncia ya están
+   * completos pero el plan de acción del cuidador (caregiver_message) está
+   * siendo generado por /api/notification/generate. El panel correspondiente
+   * muestra spinner. Cuando termina, el padre actualiza result y este flag
+   * vuelve a false. En early-exit del firewall siempre es false (el plan
+   * llegó completo en el primer response).
+   */
+  caregiverPending?: boolean;
 };
 
 type SeverityStyle = {
@@ -171,6 +186,52 @@ function renderTranscript(transcript: string): React.ReactNode {
   return parts;
 }
 
+/**
+ * Deriva el HistoryEntry que se guarda en IndexedDB para alimentar el panel
+ * "Análisis recientes". Determinista, sin LLM. La severity y headline canónicas
+ * vienen del Caregiver Notifier cuando éste corrió; si la cascada se cortó
+ * antes (firewall early-exit, Triage falló), caemos al action label del Triage
+ * como mejor aproximación al texto que el cuidador acaba de ver.
+ */
+function historyEntryFromResult(result: AudioProcessSuccess): HistoryEntry {
+  let verdict: HistoryVerdict;
+  if (result.early_exit) {
+    if (result.early_exit.reason === "blacklist_match") {
+      verdict = "blacklist_match";
+    } else {
+      switch (result.early_exit.policy) {
+        case "always_pass":
+          verdict = "whitelist_pass";
+          break;
+        case "pass_after_verification":
+          verdict = "whitelist_verify";
+          break;
+        case "take_message_only":
+          verdict = "whitelist_message";
+          break;
+      }
+    }
+  } else if (result.vishing_analysis) {
+    verdict = result.vishing_analysis.verdict;
+  } else {
+    verdict = "unknown";
+  }
+
+  const severity = result.caregiver_message?.severity ?? "MEDIUM";
+  const headline =
+    result.caregiver_message?.headline ?? ACTION_LABEL_ES[result.decision.action];
+
+  return {
+    audio_id: result.audio_id,
+    caller_id_e164: result.caller_id,
+    verdict,
+    severity,
+    headline: headline.slice(0, 80),
+    created_at: new Date().toISOString(),
+    was_early_exit: result.early_exit !== undefined,
+  };
+}
+
 /** Construye el texto que el TTS lee en voz alta. */
 function buildTtsText(args: {
   ariaPrefix: string;
@@ -199,7 +260,7 @@ function pickSpanishVoice(): SpeechSynthesisVoice | null {
   return otherEs ?? null;
 }
 
-export function VerdictPanel({ result, onReset }: Props) {
+export function VerdictPanel({ result, onReset, caregiverPending = false }: Props) {
   const severity = badgeSeverityForResponse(result);
   const sty = SEVERITY_STYLES[severity];
   const isEarlyExit = result.early_exit !== undefined;
@@ -254,6 +315,16 @@ export function VerdictPanel({ result, onReset }: Props) {
       }
     };
   }, []);
+
+  // Persistir el análisis en el historial client-side (IndexedDB). La
+  // dependencia es result.audio_id en lugar del objeto entero para evitar
+  // re-inserts si el padre re-renderiza el mismo resultado por otra razón.
+  // El primary key es audio_id, por lo que un re-insert sería idempotente,
+  // pero igual evitamos el ruido de eventos extra.
+  useEffect(() => {
+    void addToHistory(historyEntryFromResult(result));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result.audio_id]);
 
   const speakOrStop = useCallback(() => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
@@ -435,7 +506,59 @@ export function VerdictPanel({ result, onReset }: Props) {
               </div>
             ) : null}
           </section>
-        ) : null}
+        ) : caregiverPending ? (
+          // Two-phase pending: el verdict ya está visible arriba; el plan
+          // accionable lo está generando Claude Haiku 4.5 vía /api/notification/generate.
+          // Latencia típica: ~5s. Mientras tanto mostramos el slot con spinner +
+          // chip del modelo (J3.4 Claude evidente).
+          <section
+            aria-labelledby="caregiver-action-pending-heading"
+            aria-busy="true"
+            className="rounded-md border-2 border-dashed p-5 flex flex-col gap-3"
+            style={{
+              borderColor: "var(--color-border)",
+              background: "var(--color-surface-2)",
+            }}
+          >
+            <h2
+              id="caregiver-action-pending-heading"
+              className="text-lg font-bold text-[color:var(--color-text)]"
+            >
+              Preparando tu plan de acción…
+            </h2>
+            <div className="flex items-center gap-3">
+              <span
+                aria-hidden="true"
+                className="inline-block w-5 h-5 rounded-full border-2 border-[color:var(--color-brand)] border-t-transparent animate-spin motion-reduce:animate-none"
+              />
+              <p className="text-base text-[color:var(--color-text-muted)] leading-relaxed">
+                Claude Haiku 4.5 está adaptando la recomendación para que sea
+                clara y accionable.
+              </p>
+            </div>
+          </section>
+        ) : (
+          // Two-phase falló o el cliente no esperó: el verdict ya está, pero el
+          // plan accionable no llegó. Mostramos un fallback simple que no bloquea
+          // la lectura del veredicto principal.
+          <section
+            aria-labelledby="caregiver-action-fallback-heading"
+            className="rounded-md border border-[var(--color-border)] p-5 flex flex-col gap-2"
+            style={{ background: "var(--color-surface-2)" }}
+          >
+            <h2
+              id="caregiver-action-fallback-heading"
+              className="text-base font-semibold text-[color:var(--color-text-muted)]"
+            >
+              Plan de acción no disponible
+            </h2>
+            <p className="text-base text-[color:var(--color-text-muted)] leading-relaxed">
+              No pudimos generar el plan adaptado para esta llamada. La
+              recomendación general: no devuelvas el llamado al número que
+              apareció. Si era importante, llama al número oficial publicado.
+            </p>
+          </section>
+        )}
 
         {/* ================== Derivación a humano de confianza ================== */}
         {result.caregiver_redirect ? (
@@ -452,6 +575,18 @@ export function VerdictPanel({ result, onReset }: Props) {
         {/* ================== Plan de denuncia pre-rellenado ================== */}
         {result.denuncia ? <DenunciaCard denuncia={result.denuncia} /> : null}
 
+        {/* ================== ¿Ya entregó datos? — respuesta a incidente ================== */}
+        {/*
+          Solo se renderiza si severity ≥ MEDIUM (el componente retorna null en LOW).
+          Cubre cascada (caregiver_message presente) y early-exit blacklist HIGH.
+          Sin LLM extra: las acciones se derivan deterministicamente de patterns +
+          institutional_registry.
+        */}
+        <DamageControlCard
+          patterns={result.vishing_analysis?.patterns_detected ?? []}
+          severity={result.caregiver_message?.severity ?? "MEDIUM"}
+        />
+
         {/* ================== Transcripción (oculta en early-exit) ================== */}
         {!isEarlyExit ? (
         <section
@@ -464,10 +599,6 @@ export function VerdictPanel({ result, onReset }: Props) {
           >
             Lo que dijo el llamante
           </h2>
-          <p className="text-sm text-[color:var(--color-text-subtle)]">
-            Antes del análisis, Vigía revisa la transcripción en busca de RUT,
-            números de cuenta y teléfonos para ocultarlos automáticamente.
-          </p>
           <div
             className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 leading-relaxed text-[color:var(--color-text)]"
             lang="es-CL"
@@ -779,6 +910,18 @@ export function VerdictPanel({ result, onReset }: Props) {
               </dd>
             </div>
           </dl>
+
+          <div className="mt-4 pt-3 border-t border-[var(--color-border)] flex flex-col gap-2">
+            <p className="text-xs text-[color:var(--color-text-subtle)] leading-relaxed">
+              Cada eslabón de la cascada tiene un gate explícito en el orquestador:
+              la profundidad del análisis es proporcional al riesgo del audio.
+            </p>
+            <p className="text-xs text-[color:var(--color-text-subtle)] leading-relaxed">
+              Las recomendaciones de respuesta a incidente se generan
+              deterministamente a partir de los patrones detectados — no las
+              inventa Claude.
+            </p>
+          </div>
         </details>
 
         {/* ================== Reset ================== */}

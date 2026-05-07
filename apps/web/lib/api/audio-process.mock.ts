@@ -90,7 +90,7 @@ const MOCK_DECISIONS: Record<MockScenario, CallTriageDecision> = {
 const MOCK_TRANSCRIPTS: Record<MockScenario, string> = {
   scam: "Hola abuelita, soy yo, su nieto Matías. Tuve un accidente con la camioneta del taller, choqué con un camión y la grúa la tiene retenida. Necesito que me transfiera <ACCOUNT_REDACTED> a la cuenta vista que le dicto, son 850 mil pesos urgentes. Por favor no le diga a mi mamá, ella se preocupa mucho. La cuenta es <ACCOUNT_REDACTED>, está a nombre de Andrés del taller Ruta 5.",
   bank: "Buenos días, le habla Carolina del departamento de seguridad de su banco. Detectamos movimientos sospechosos en su cuenta y necesitamos verificar urgente. ¿Me puede confirmar su clave dinámica y los últimos 3 dígitos de su tarjeta? Si no responde en 5 minutos vamos a tener que bloquear la cuenta. Llámeme de vuelta al <PHONE_REDACTED>, es el número oficial.",
-  family: "Hola abuela, soy Camila tu nieta. Te llamo desde un teléfono nuevo porque se me rompió el celular. Quería saber cómo estás, no nos vemos hace varias semanas. ¿Podés pasar el fin de semana? Mamá quiere organizar un asado en la casa.",
+  family: "Hola abuela, soy Camila tu nieta. Te llamo desde un teléfono nuevo porque se me rompió el celular. Quería saber cómo estás, no nos vemos hace varias semanas. ¿Puedes pasar el fin de semana? Mamá quiere organizar un asado en la casa.",
   oracle: "Hola abuela, soy yo, la palabra clave es 'manzana', pásame altiro porque tengo apuro. Es urgente, te llamo desde el celular de un amigo.",
 };
 
@@ -107,7 +107,7 @@ const MOCK_PII_SUMMARY: Record<
 /**
  * Genera un AudioProcessSuccess sintético para desarrollo de UI.
  * Los modelos y tools listados son los reales del pipeline (Sonnet 4.6 +
- * ElevenLabs Scribe + redactor PII determinista).
+ * Groq Whisper Large v3 Turbo + redactor PII determinista).
  */
 export function mockAudioProcessResponse(
   scenario: MockScenario = "scam",
@@ -152,7 +152,7 @@ export function mockAudioProcessResponse(
     cascade_statuses: { triage: { ok: true } },
     models_used: ["claude-sonnet-4-6"],
     tools_used: [
-      "elevenlabs.scribe_v1",
+      "groq.whisper-large-v3-turbo",
       "pii_redactor.regex_es_cl",
       "anthropic.tool_use:decide_action",
     ],

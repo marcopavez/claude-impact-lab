@@ -275,7 +275,6 @@ function renderSessionContext(
         patterns_detected: input.vishing_decision.patterns_detected,
         claimed_entity: input.vishing_decision.claimed_entity,
         rationale_es: input.vishing_decision.rationale_es,
-        next_steps_es: input.vishing_decision.next_steps_es,
       })
     : "null";
 

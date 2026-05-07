@@ -126,10 +126,10 @@ export const decideActionTool = {
       tts_response: { type: "string", maxLength: 280 },
       evidence_of_social_engineering: {
         type: "array",
-        items: { type: "string" },
-        maxItems: 12,
+        items: { type: "string", maxLength: 200 },
+        maxItems: 5,
       },
-      rationale: { type: "string", maxLength: 500 },
+      rationale: { type: "string", maxLength: 250 },
       canary_present: { type: "boolean" },
     },
   },
