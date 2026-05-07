@@ -1,6 +1,6 @@
 // Caregiver Notifier Agent — último eslabón de la cascada de Vigía.
 // Spec: docs/SEGURIDAD.md §24 + §19 (reglas comunes).
-// Modelo: Claude Sonnet 4.6 con tool_choice forzado sobre `submit_notification`.
+// Modelo: Claude Haiku 4.5 con tool_choice forzado sobre `submit_notification`.
 // Latencia objetivo: p50 < 2s.
 //
 // Modo MVP/PoC (N20): NO hay Web Push persistido, ni WhatsApp Cloud, ni SMS Twilio.
@@ -248,59 +248,43 @@ function renderSessionContext(
   canaryToken: string,
   derivedSeverity: NotificationSeverity,
 ): string {
-  const triageBlock = JSON.stringify(
-    {
-      intent: input.triage_decision.intent,
-      action: input.triage_decision.action,
-      evidence: input.triage_decision.evidence_of_social_engineering,
-      rationale: input.triage_decision.rationale,
-    },
-    null,
-    2,
-  );
+  const triageBlock = JSON.stringify({
+    intent: input.triage_decision.intent,
+    action: input.triage_decision.action,
+    evidence: input.triage_decision.evidence_of_social_engineering,
+    rationale: input.triage_decision.rationale,
+  });
 
   const identityBlock = input.identity_decision
-    ? JSON.stringify(
-        {
-          shared_word_status: input.identity_decision.shared_word_status,
-          kba_status: input.identity_decision.kba_status,
-          evasion_detected: input.identity_decision.evasion_detected,
-          outcome: input.identity_decision.outcome,
-          challenge_plan_for_cuidador:
-            input.identity_decision.challenge_plan_for_cuidador,
-          rationale: input.identity_decision.rationale,
-        },
-        null,
-        2,
-      )
+    ? JSON.stringify({
+        shared_word_status: input.identity_decision.shared_word_status,
+        kba_status: input.identity_decision.kba_status,
+        evasion_detected: input.identity_decision.evasion_detected,
+        outcome: input.identity_decision.outcome,
+        challenge_plan_for_cuidador:
+          input.identity_decision.challenge_plan_for_cuidador,
+        rationale: input.identity_decision.rationale,
+      })
     : "null";
 
   const vishingBlock = input.vishing_decision
-    ? JSON.stringify(
-        {
-          verdict: input.vishing_decision.verdict,
-          verdict_kind: input.vishing_decision.verdict_kind,
-          confidence: input.vishing_decision.confidence,
-          patterns_detected: input.vishing_decision.patterns_detected,
-          claimed_entity: input.vishing_decision.claimed_entity,
-          rationale_es: input.vishing_decision.rationale_es,
-          next_steps_es: input.vishing_decision.next_steps_es,
-        },
-        null,
-        2,
-      )
+    ? JSON.stringify({
+        verdict: input.vishing_decision.verdict,
+        verdict_kind: input.vishing_decision.verdict_kind,
+        confidence: input.vishing_decision.confidence,
+        patterns_detected: input.vishing_decision.patterns_detected,
+        claimed_entity: input.vishing_decision.claimed_entity,
+        rationale_es: input.vishing_decision.rationale_es,
+        next_steps_es: input.vishing_decision.next_steps_es,
+      })
     : "null";
 
   const regulatoryBlock = input.regulatory_decision
-    ? JSON.stringify(
-        {
-          cite_or_silent: input.regulatory_decision.cite_or_silent,
-          translation_es: input.regulatory_decision.translation_es,
-          citations_count: input.regulatory_decision.citations.length,
-        },
-        null,
-        2,
-      )
+    ? JSON.stringify({
+        cite_or_silent: input.regulatory_decision.cite_or_silent,
+        translation_es: input.regulatory_decision.translation_es,
+        citations_count: input.regulatory_decision.citations.length,
+      })
     : "null (no se invocó Regulatory Translator)";
 
   return `CONTEXTO DE SESIÓN (cambia por request — NO está en cache):
@@ -459,7 +443,7 @@ export async function runCaregiverNotifier(
 
   try {
     response = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 800,
       temperature: 0,
       system: [

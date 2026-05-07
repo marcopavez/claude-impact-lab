@@ -6,12 +6,18 @@
 // evidente: muestra que la cascada existe).
 //
 // Timing simulado client-side (los tiempos absolutos vienen de los
-// rangos esperados de cada agente; el endpoint es one-shot y no
-// emite progress events, así que aproximamos):
-//   - Step 1 (Transcribiendo audio):       t = 0  → 7 s
-//   - Step 2 (Detectando señales):         t = 7  → 15 s
-//   - Step 3 (Verificando + citando ley):  t = 15 → 25 s
-//   - Step 4 (Generando recomendación):    t = 25+ → hasta que llegue el response
+// rangos medidos del backend; el endpoint es one-shot y no emite
+// progress events, así que aproximamos):
+//   - Step 1 (Transcribiendo audio):     t = 0   → 3 s   (Scribe ~1.5s)
+//   - Step 2 (Detectando patrones):      t = 3   → 13 s  (Triage ~10s en Sonnet 4.6)
+//   - Step 3 (Análisis profundo):        t = 13  → 28 s  (Vishing ~16s en Opus 4.7 + thinking)
+//   - Step 4 (Preparando recomendación): t = 28+ → hasta que llegue el response (Notifier ~5s)
+//
+// Los labels son fieles para CUALQUIER audio: describen lo que la
+// cascada hace en general, sin afirmar acciones específicas (Identity
+// Verifier, Regulatory Translator) que solo corren en cierto subset
+// de casos. La trazabilidad real de qué eslabones efectivamente se
+// invocaron se muestra en CascadeTrace dentro del VerdictPanel.
 //
 // Accesibilidad:
 //   - role="status" + aria-live="polite" anuncia cambios al lector.
@@ -25,21 +31,22 @@ const STEPS = [
   {
     label: "Transcribiendo el audio",
     description: "Convirtiendo la voz en texto.",
-    completeAtMs: 7000,
+    completeAtMs: 3000,
   },
   {
-    label: "Detectando señales de estafa",
-    description: "Buscando patrones del cuento del tío y suplantación.",
-    completeAtMs: 15000,
+    label: "Detectando patrones de fraude",
+    description: "Clasificando la intención del llamante y señales de manipulación.",
+    completeAtMs: 13000,
   },
   {
-    label: "Verificando identidad y citando la ley",
-    description: "Comparando con fuentes oficiales chilenas.",
-    completeAtMs: 25000,
+    label: "Análisis profundo de la conversación",
+    description:
+      "Cruzando indicios de cuento del tío, suplantación y presión emocional.",
+    completeAtMs: 28000,
   },
   {
-    label: "Generando la recomendación",
-    description: "Preparando una respuesta clara y accionable.",
+    label: "Preparando la recomendación",
+    description: "Síntesis del veredicto en lenguaje claro para el cuidador.",
     completeAtMs: Number.POSITIVE_INFINITY,
   },
 ] as const;

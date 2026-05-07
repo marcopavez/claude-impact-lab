@@ -30,8 +30,10 @@ import {
   CONFIDENCE_LABEL_ES,
 } from "../lib/api/audio-process.types";
 import { CaregiverRedirectCard } from "./CaregiverRedirectCard";
+import { CascadeTrace } from "./CascadeTrace";
 import { CounterScriptCard } from "./CounterScriptCard";
 import { DenunciaCard } from "./DenunciaCard";
+import { EarlyExitBanner } from "./EarlyExitBanner";
 import { PersonalBlacklistButton } from "./PersonalBlacklistButton";
 import { PoweredByClaudeBadge } from "./PoweredByClaudeBadge";
 import {
@@ -200,6 +202,26 @@ function pickSpanishVoice(): SpeechSynthesisVoice | null {
 export function VerdictPanel({ result, onReset }: Props) {
   const severity = badgeSeverityForResponse(result);
   const sty = SEVERITY_STYLES[severity];
+  const isEarlyExit = result.early_exit !== undefined;
+  const isWhitelistMatch =
+    result.early_exit?.reason === "whitelist_match";
+
+  // Para whitelist matches, el header (icono gigante + stripe + eyebrow) usa
+  // estilo "safe" (verde, ShieldCheckIcon) aunque la severity computada sea
+  // MEDIUM (caso pass_after_verification). El recuadro "Lo primero que tienes
+  // que hacer" sigue usando `sty` (severity real), así la cautela queda visible
+  // sin contradecir el mensaje principal "este número está en tus contactos".
+  const headerSty = isWhitelistMatch ? SEVERITY_STYLES.safe : sty;
+  const eyebrowText = isWhitelistMatch
+    ? "Contacto registrado en tus confiables"
+    : "Veredicto de Vigía";
+  // Prefijo para aria-label + TTS. "Llamada segura:" del estilo `safe` se lee
+  // mal para pass_after_verification (Pedro) porque después el body dice
+  // "verifica antes de devolver". "Contacto registrado:" funciona para LOW y
+  // MEDIUM whitelist sin contradecirse.
+  const headerAriaPrefix = isWhitelistMatch
+    ? "Contacto registrado:"
+    : sty.ariaPrefix;
 
   const headline =
     result.caregiver_message?.headline ??
@@ -241,7 +263,7 @@ export function VerdictPanel({ result, onReset }: Props) {
       return;
     }
     const text = buildTtsText({
-      ariaPrefix: sty.ariaPrefix,
+      ariaPrefix: headerAriaPrefix,
       headline,
       description,
       firstAction,
@@ -259,7 +281,7 @@ export function VerdictPanel({ result, onReset }: Props) {
     setIsSpeaking(true);
   }, [
     isSpeaking,
-    sty.ariaPrefix,
+    headerAriaPrefix,
     headline,
     description,
     firstAction,
@@ -273,7 +295,7 @@ export function VerdictPanel({ result, onReset }: Props) {
       {/* Barra superior coloreada — comunica severidad antes de leer. */}
       <div
         className="verdict-stripe"
-        style={{ background: sty.stripe }}
+        style={{ background: headerSty.stripe }}
         aria-hidden="true"
       />
 
@@ -284,26 +306,26 @@ export function VerdictPanel({ result, onReset }: Props) {
             className="text-sm uppercase tracking-wide font-semibold text-[color:var(--color-text-muted)]"
             id="verdict-eyebrow"
           >
-            Veredicto de Vigía
+            {eyebrowText}
           </p>
 
           <div
             role="status"
             aria-live="polite"
             className="flex items-start gap-4"
-            aria-label={`${sty.ariaPrefix} ${headline}`}
+            aria-label={`${headerAriaPrefix} ${headline}`}
           >
             <span
               aria-hidden="true"
               className={`flex-shrink-0 inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-full ${
-                sty.pulse ? "pulse-danger" : ""
+                headerSty.pulse ? "pulse-danger" : ""
               }`}
               style={{
-                background: sty.bg,
-                color: sty.fg,
+                background: headerSty.bg,
+                color: headerSty.fg,
               }}
             >
-              <sty.Icon className="w-9 h-9 sm:w-11 sm:h-11" />
+              <headerSty.Icon className="w-9 h-9 sm:w-11 sm:h-11" />
             </span>
             <div className="flex flex-col gap-1 min-w-0">
               <h1
@@ -344,9 +366,30 @@ export function VerdictPanel({ result, onReset }: Props) {
             ) : (
               <span />
             )}
-            <PoweredByClaudeBadge model={primaryModel} size="sm" />
+            {isEarlyExit ? (
+              <span
+                className="inline-flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] font-medium text-[color:var(--color-text-muted)] text-sm py-1 px-2"
+                aria-label="Decisión local del firewall, sin llamar a Claude"
+              >
+                <ShieldCheckIcon className="w-4 h-4 text-[color:var(--color-brand)]" />
+                <span>
+                  Decisión{" "}
+                  <strong className="text-[color:var(--color-text)]">
+                    local
+                  </strong>{" "}
+                  del firewall
+                </span>
+              </span>
+            ) : (
+              <PoweredByClaudeBadge model={primaryModel} size="sm" />
+            )}
           </div>
         </header>
+
+        {/* ================== Banner early-exit (firewall match) ================== */}
+        {result.early_exit ? (
+          <EarlyExitBanner match={result.early_exit} />
+        ) : null}
 
         {/* ================== Acción primaria (siempre visible) ================== */}
         {result.caregiver_message ? (
@@ -409,7 +452,8 @@ export function VerdictPanel({ result, onReset }: Props) {
         {/* ================== Plan de denuncia pre-rellenado ================== */}
         {result.denuncia ? <DenunciaCard denuncia={result.denuncia} /> : null}
 
-        {/* ================== Transcripción (siempre visible) ================== */}
+        {/* ================== Transcripción (oculta en early-exit) ================== */}
+        {!isEarlyExit ? (
         <section
           aria-labelledby="transcript-heading"
           className="flex flex-col gap-2"
@@ -459,6 +503,10 @@ export function VerdictPanel({ result, onReset }: Props) {
             </div>
           ) : null}
         </section>
+        ) : null}
+
+        {/* ================== Cascada agéntica — trazabilidad de qué corrió ================== */}
+        <CascadeTrace result={result} />
 
         {/* ================== Análisis profundo (Vishing Analyst) ================== */}
         {result.vishing_analysis ? (
@@ -586,7 +634,8 @@ export function VerdictPanel({ result, onReset }: Props) {
           </details>
         ) : null}
 
-        {/* ================== Razonamiento del Triage (colapsable, cerrado) ================== */}
+        {/* ================== Razonamiento del Triage (oculto en early-exit) ================== */}
+        {!isEarlyExit ? (
         <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
           <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base">
             Decisión inicial del Triage
@@ -626,6 +675,7 @@ export function VerdictPanel({ result, onReset }: Props) {
             )}
           </div>
         </details>
+        ) : null}
 
         {/* ================== Pie técnico (colapsable, cerrado) ================== */}
         <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">

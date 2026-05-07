@@ -1,6 +1,6 @@
 // Vishing Analyst Agent — eslabón post-call de la cascada de Vigía.
 // Spec: docs/SEGURIDAD.md §22 (system prompt) + §19 (reglas comunes).
-// Modelo: Claude Opus 4.7 + adaptive thinking (effort: high por defecto).
+// Modelo: Claude Opus 4.7 + adaptive thinking (effort: medium por defecto).
 // tool_choice="auto" (thinking no acepta "any"/"tool" — la API rechaza con 400
 // "Thinking may not be enabled when tool_choice forces tool use"); el system prompt
 // obliga a invocar `submit_analysis` y el fallback schema_invalid cubre la prosa libre.
@@ -413,7 +413,7 @@ export async function runVishingAnalyst(
   const canaryToken = generateCanaryToken();
   const sessionContext = renderSessionContext(input, canaryToken);
   const userMessage = spotlightTranscript(input.caller_transcript_redacted);
-  const effort = opts.effort ?? "high";
+  const effort = opts.effort ?? "medium";
 
   const startedAt = Date.now();
   let response: Anthropic.Messages.Message;
@@ -422,8 +422,9 @@ export async function runVishingAnalyst(
     response = await client.messages.create({
       model: "claude-opus-4-7",
       // Opus 4.7: adaptive thinking + effort controlan profundidad. max_tokens
-      // de 16000 deja headroom suficiente para el tool call con effort=high.
-      max_tokens: 16000,
+      // incluye thinking + output: 10k = ~6-8k thinking effort=medium + ~2k tool call,
+      // con margen para que el sampler no malgaste pases rebalanceando contra el techo.
+      max_tokens: 10000,
       thinking: { type: "adaptive" },
       output_config: { effort },
       system: [

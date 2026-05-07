@@ -21,6 +21,10 @@ import { runVishingAnalyst } from "@/lib/agents/vishing-analyst";
 import { transcribeAudio } from "@/lib/clients/elevenlabs";
 import { httpSourceFetcher } from "@/lib/clients/source-fetcher";
 import { buildDenuncia } from "@/lib/denuncia/build-denuncia";
+import {
+  buildEarlyExitSuccess,
+  matchCallerIdAgainstFirewall,
+} from "@/lib/firewall/early-exit";
 import { logError } from "@/lib/log";
 import { redact } from "@/lib/validators/pii";
 import {
@@ -153,6 +157,24 @@ export async function POST(request: Request): Promise<Response> {
     typeof protectedNameRaw === "string" && protectedNameRaw.trim().length > 0
       ? protectedNameRaw.trim().slice(0, 80)
       : AUDIO_PROCESS_LIMITS.defaultProtectedName;
+
+  // ----- 4.5. Early-exit del firewall -----
+  // Match caller_id contra blacklist > whitelist en data/demo-config.json. Si
+  // hay match, cortocircuitamos: NO transcribe (ahorra ~10s + créditos
+  // ElevenLabs), NO llama a Claude (ahorra créditos Anthropic), no toca PII.
+  // Diseñado para que el mock se sienta coherente al jurado: si te llama un
+  // número conocido (bueno o malo), el firewall ya tiene la respuesta.
+  const firewallMatch = matchCallerIdAgainstFirewall(callerId, demoConfig);
+  if (firewallMatch) {
+    const success = buildEarlyExitSuccess({
+      match: firewallMatch,
+      callerId,
+      protectedName,
+      audioId,
+      startedAt: totalStartedAt,
+    });
+    return Response.json(success, { status: 200 });
+  }
 
   // ----- 5. STT (ElevenLabs Scribe v1) -----
   let blob: Blob;
@@ -522,7 +544,7 @@ export async function POST(request: Request): Promise<Response> {
     cascadeStatuses.notifier = nResult.ok
       ? { ok: true }
       : { ok: false, reason: nResult.reason, fell_back: true };
-    modelsUsed.push("claude-sonnet-4-6:notifier");
+    modelsUsed.push("claude-haiku-4-5:notifier");
     toolsUsed.push("claude.tool_use:submit_notification");
     if (!canaryPresent && nResult.ok && nResult.decision.canary_present) {
       canaryPresent = true;
