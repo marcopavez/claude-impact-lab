@@ -1,7 +1,8 @@
 "use client";
 
-// UploadForm — el corazón de la PWA: drag-drop + checkbox consentimiento +
-// fields opcionales + submit a /api/audio/process.
+// UploadForm — el corazón de la PWA: drag-drop + reproductor de
+// pre-validación + checkbox consentimiento + fields opcionales + submit
+// a /api/audio/process.
 //
 // Validación client-side (pre-flight, no reemplaza la del servidor):
 //   - Tamaño: AUDIO_PROCESS_LIMITS.maxFileBytes
@@ -10,10 +11,18 @@
 //   - caller_id si está presente, debe matchear E.164 chileno
 //
 // Mock toggle: cuando NEXT_PUBLIC_MOCK_AUDIO_PROCESS === "1" usamos
-// mockAudioProcessResponse() en lugar del fetch real. Esto se quita borrando
-// las dos ramas marcadas con `// MOCK:` cuando el endpoint esté listo.
+// mockAudioProcessResponse() en lugar del fetch real. Esto se quita
+// borrando las dos ramas marcadas con `// MOCK:` cuando el endpoint
+// esté listo.
 
-import { useCallback, useId, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
   AudioProcessError,
   AudioProcessResponse,
@@ -26,6 +35,7 @@ import {
 import { LoadingState } from "./LoadingState";
 import { VerdictPanel } from "./VerdictPanel";
 import { ErrorState } from "./ErrorState";
+import { MicIcon, CloseIcon } from "./icons";
 // MOCK: import del mock — se borra cuando el endpoint real esté en main.
 import {
   mockAudioProcessResponse,
@@ -92,6 +102,19 @@ export function UploadForm() {
   // MOCK: lectura del flag a nivel render — se borra junto al import.
   const useMock = process.env.NEXT_PUBLIC_MOCK_AUDIO_PROCESS === "1";
 
+  // Object URL del audio para el reproductor de pre-validación.
+  // useMemo + cleanup para evitar memory leaks al cambiar de archivo.
+  const audioUrl = useMemo(() => {
+    if (!file) return null;
+    return URL.createObjectURL(file);
+  }, [file]);
+
+  useEffect(() => {
+    return () => {
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+    };
+  }, [audioUrl]);
+
   const handleFiles = useCallback((files: FileList | null) => {
     if (!files || files.length === 0) return;
     const next = files[0];
@@ -127,6 +150,12 @@ export function UploadForm() {
     setCallerId("");
     setProtectedName("");
     setStatus({ kind: "idle" });
+    setClientError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }, []);
+
+  const clearFile = useCallback(() => {
+    setFile(null);
     setClientError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
@@ -219,11 +248,11 @@ export function UploadForm() {
           id="upload-heading"
           className="text-2xl font-semibold text-[color:var(--color-text)]"
         >
-          Subí el audio sospechoso
+          Sube el audio sospechoso
         </h2>
         <p className="text-base text-[color:var(--color-text-muted)]">
-          Vigía analiza la grabación y te dice si la llamada es legítima o si es
-          una estafa. Aceptamos archivos MP3, M4A, WAV o WebM, hasta 10 MB.
+          Vigía analiza la grabación y te dice si la llamada es legítima o si
+          es una estafa. Aceptamos archivos MP3, M4A, WAV o WebM, hasta 10 MB.
         </p>
       </div>
 
@@ -240,11 +269,11 @@ export function UploadForm() {
           onDragLeave={onDragLeave}
           onDrop={onDrop}
         >
-          <span className="text-3xl" aria-hidden="true">
-            🎙️
-          </span>
+          <MicIcon
+            className="w-12 h-12 text-[color:var(--color-brand)]"
+          />
           {file ? (
-            <span className="text-[color:var(--color-text)] font-semibold">
+            <span className="text-[color:var(--color-text)] font-semibold text-lg">
               {file.name}{" "}
               <span className="font-normal text-[color:var(--color-text-subtle)]">
                 ({formatBytes(file.size)})
@@ -252,11 +281,11 @@ export function UploadForm() {
             </span>
           ) : (
             <>
-              <span className="text-[color:var(--color-text)] font-semibold">
-                Arrastrá el audio acá
+              <span className="text-[color:var(--color-text)] font-semibold text-lg">
+                Arrastra el audio aquí
               </span>
               <span className="text-base text-[color:var(--color-text-muted)]">
-                o tocá para elegirlo desde tu teléfono o computador
+                o toca para elegirlo desde tu teléfono o computador
               </span>
             </>
           )}
@@ -277,6 +306,39 @@ export function UploadForm() {
         >
           Máximo 10 MB. Los formatos compatibles son MP3, M4A, WAV y WebM.
         </p>
+
+        {/* Reproductor de pre-validación: el cuidador escucha el audio
+         * antes de mandarlo, confirma que es el correcto. Botón quitar
+         * por si subió el equivocado. */}
+        {file && audioUrl ? (
+          <div
+            className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 flex flex-col gap-3"
+            role="group"
+            aria-label="Reproductor de pre-validación del audio"
+          >
+            <p className="text-sm font-semibold text-[color:var(--color-text-muted)]">
+              Escucha el audio antes de enviarlo:
+            </p>
+            <audio
+              src={audioUrl}
+              controls
+              preload="metadata"
+              className="w-full"
+              aria-label={`Reproducir ${file.name} antes de enviarlo a Vigía`}
+            />
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={clearFile}
+                className="btn-ghost"
+                aria-label="Quitar este audio y elegir otro"
+              >
+                <CloseIcon className="w-4 h-4" />
+                <span>Quitar audio</span>
+              </button>
+            </div>
+          </div>
+        ) : null}
       </fieldset>
 
       {/* ================== Consentimiento (obligatorio) ================== */}
@@ -299,75 +361,82 @@ export function UploadForm() {
             required
           />
           <span className="leading-relaxed">
-            Confirmo que el llamante fue notificado de esta grabación, o que
-            la grabación se obtuvo bajo la regla de "consentimiento de una sola
-            parte" (one-party-consent), permitida por la legislación chilena.
+            Confirmo que el llamante fue avisado de esta grabación, o que la
+            grabación se obtuvo de manera legal en Chile.
           </span>
         </label>
-        <p
-          id={`${formId}-consent-detail`}
-          className="mt-3 text-sm text-[color:var(--color-text-subtle)] pl-9"
-        >
-          Sin esta confirmación no podemos analizar el audio. Vigía no guarda
-          el archivo: se procesa y se descarta.
-        </p>
+        <details className="mt-3 ml-9">
+          <summary className="cursor-pointer text-sm text-[color:var(--color-brand)] font-semibold">
+            ¿Por qué pedimos esto?
+          </summary>
+          <p
+            id={`${formId}-consent-detail`}
+            className="mt-2 text-sm text-[color:var(--color-text-muted)] leading-relaxed"
+          >
+            Sin esta confirmación no podemos analizar el audio. Vigía no guarda
+            el archivo: se procesa y se descarta de inmediato. La regla de
+            "consentimiento de una sola parte" (one-party-consent) permite que
+            grabes una llamada en la que tú participas.
+          </p>
+        </details>
       </fieldset>
 
       {/* ================== Campos opcionales ================== */}
-      <fieldset className="flex flex-col gap-4 border-0 p-0 m-0">
-        <legend className="label-strong">
+      <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+        <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base">
           Datos opcionales (mejoran el análisis)
-        </legend>
+        </summary>
+        <div className="mt-4 flex flex-col gap-4">
+          <div>
+            <label htmlFor={`${formId}-caller`} className="label-strong">
+              Número del llamante
+            </label>
+            <input
+              id={`${formId}-caller`}
+              type="tel"
+              inputMode="tel"
+              placeholder="+56912345678"
+              value={callerId}
+              onChange={(e) => setCallerId(e.target.value)}
+              autoComplete="tel"
+              className="w-full px-3 py-3 rounded-md border-2 border-[var(--color-border)] bg-white text-[color:var(--color-text)] text-base focus:border-[color:var(--color-brand)]"
+              aria-describedby={`${formId}-caller-help`}
+            />
+            <p
+              id={`${formId}-caller-help`}
+              className="mt-1 text-sm text-[color:var(--color-text-subtle)]"
+            >
+              Formato internacional con el signo + (ejemplo:
+              <span className="font-mono"> +56912345678</span>). Si no lo
+              sabes, déjalo vacío.
+            </p>
+          </div>
 
-        <div>
-          <label htmlFor={`${formId}-caller`} className="label-strong">
-            Número del llamante
-          </label>
-          <input
-            id={`${formId}-caller`}
-            type="tel"
-            inputMode="tel"
-            placeholder="+56912345678"
-            value={callerId}
-            onChange={(e) => setCallerId(e.target.value)}
-            autoComplete="tel"
-            className="w-full px-3 py-3 rounded-md border-2 border-[var(--color-border)] bg-white text-[color:var(--color-text)] text-base focus:border-[color:var(--color-brand)]"
-            aria-describedby={`${formId}-caller-help`}
-          />
-          <p
-            id={`${formId}-caller-help`}
-            className="mt-1 text-sm text-[color:var(--color-text-subtle)]"
-          >
-            Formato internacional con el signo + (ejemplo:
-            <span className="font-mono"> +56912345678</span>). Si no lo sabés,
-            dejalo vacío.
-          </p>
+          <div>
+            <label htmlFor={`${formId}-name`} className="label-strong">
+              Primer nombre de la persona protegida
+            </label>
+            <input
+              id={`${formId}-name`}
+              type="text"
+              placeholder="María"
+              value={protectedName}
+              onChange={(e) => setProtectedName(e.target.value)}
+              autoComplete="given-name"
+              maxLength={40}
+              className="w-full px-3 py-3 rounded-md border-2 border-[var(--color-border)] bg-white text-[color:var(--color-text)] text-base focus:border-[color:var(--color-brand)]"
+              aria-describedby={`${formId}-name-help`}
+            />
+            <p
+              id={`${formId}-name-help`}
+              className="mt-1 text-sm text-[color:var(--color-text-subtle)]"
+            >
+              Solo el primer nombre, nunca apellido ni dirección. Si lo dejas
+              vacío, usamos &quot;el adulto mayor&quot;.
+            </p>
+          </div>
         </div>
-
-        <div>
-          <label htmlFor={`${formId}-name`} className="label-strong">
-            Primer nombre de la persona protegida
-          </label>
-          <input
-            id={`${formId}-name`}
-            type="text"
-            placeholder="María"
-            value={protectedName}
-            onChange={(e) => setProtectedName(e.target.value)}
-            autoComplete="given-name"
-            maxLength={40}
-            className="w-full px-3 py-3 rounded-md border-2 border-[var(--color-border)] bg-white text-[color:var(--color-text)] text-base focus:border-[color:var(--color-brand)]"
-            aria-describedby={`${formId}-name-help`}
-          />
-          <p
-            id={`${formId}-name-help`}
-            className="mt-1 text-sm text-[color:var(--color-text-subtle)]"
-          >
-            Solo el primer nombre, nunca apellido ni dirección. Si lo dejás
-            vacío, usamos "el adulto mayor".
-          </p>
-        </div>
-      </fieldset>
+      </details>
 
       {/* ================== Errores client-side ================== */}
       {clientError ? (

@@ -9,7 +9,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Vigía — detector de estafas telefónicas",
     short_name: "Vigía",
     description:
-      "Subí un audio sospechoso y Vigía te dice si es estafa. Pensado para proteger a adultos mayores chilenos.",
+      "Sube un audio sospechoso y Vigía te dice si es estafa. Pensado para proteger a adultos mayores chilenos.",
     start_url: "/",
     display: "standalone",
     orientation: "portrait",

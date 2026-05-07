@@ -1,5 +1,8 @@
 // Badge "Powered by Claude" — sostiene J3.4 ("Claude evidente") en la demo.
 // Visible siempre que se renderice un veredicto, idealmente cerca del CTA.
+// Reemplazado el emoji ⚡ por un SparkleIcon SVG para consistencia entre OS.
+
+import { SparkleIcon } from "./icons";
 
 type Props = {
   /** Modelo activo a mostrar; default Sonnet 4.6 que es el que mueve el Triage. */
@@ -23,9 +26,10 @@ export function PoweredByClaudeBadge({
       className={`inline-flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] font-medium text-[color:var(--color-text-muted)] ${sizeClasses} ${className ?? ""}`}
       aria-label={`Análisis hecho con Claude, modelo ${model}`}
     >
-      <span aria-hidden="true">⚡</span>
+      <SparkleIcon className="w-4 h-4 text-[color:var(--color-brand)]" />
       <span>
-        Análisis con <strong className="text-[color:var(--color-text)]">Claude</strong>
+        Análisis con{" "}
+        <strong className="text-[color:var(--color-text)]">Claude</strong>
       </span>
       <span
         aria-hidden="true"
