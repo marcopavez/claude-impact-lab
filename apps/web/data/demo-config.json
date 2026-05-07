@@ -114,5 +114,20 @@
       "question": "¿Cuál era el oficio del marido de María (fallecido en 2019)?",
       "expected_answer_normalized": "carpintero"
     }
+  ],
+  "_caregivers_comment": "Cuidadores humanos de confianza. Cuando el Identity Verifier marca outcome=redirect_to_caregiver (whitelist hit + shared word incorrecto, claim familiar no verificado, severity MEDIUM con duda razonable), el orquestador del endpoint deriva la llamada al cuidador con is_primary=true. Esto NO es la whitelist (whitelist=quién puede llamar; caregivers=quién recibe redirects). En MVP el redirect es renderizado en pantalla, no llamada real (V2 con telefonía).",
+  "caregivers": [
+    {
+      "name": "Carla",
+      "role": "hija",
+      "phone_e164": "+56912345678",
+      "is_primary": true
+    },
+    {
+      "name": "Pedro",
+      "role": "nieto",
+      "phone_e164": "+56987654321",
+      "is_primary": false
+    }
   ]
 }

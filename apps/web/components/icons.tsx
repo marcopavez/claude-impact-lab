@@ -179,3 +179,43 @@ export function RefreshIcon(props: IconProps) {
     </svg>
   );
 }
+
+/** Megáfono — frase defensiva contra futuras llamadas. */
+export function MegaphoneIcon(props: IconProps) {
+  return (
+    <svg {...baseProps} {...props}>
+      <path d="m3 11 18-5v12L3 14v-3z" />
+      <path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" />
+    </svg>
+  );
+}
+
+/** Persona en círculo — cuidador o familiar de confianza. */
+export function UserIcon(props: IconProps) {
+  return (
+    <svg {...baseProps} {...props}>
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
+
+/** Círculo con barra — bloquear / prohibir. */
+export function BanIcon(props: IconProps) {
+  return (
+    <svg {...baseProps} {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+    </svg>
+  );
+}
+
+/** Portapapeles — botón copiar al portapapeles. */
+export function ClipboardIcon(props: IconProps) {
+  return (
+    <svg {...baseProps} {...props}>
+      <rect x="8" y="2" width="8" height="4" rx="1" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+    </svg>
+  );
+}

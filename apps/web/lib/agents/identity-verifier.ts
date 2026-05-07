@@ -36,6 +36,7 @@ export type KbaStatus = "not_attempted" | "matched" | "incorrect";
 
 export type IdentityOutcome =
   | "transfer_authorized"
+  | "redirect_to_caregiver"
   | "take_message"
   | "hangup_with_warning";
 
@@ -148,7 +149,12 @@ export const decideVerificationOutcomeTool = {
       evasion_detected: { type: "boolean" },
       outcome: {
         type: "string",
-        enum: ["transfer_authorized", "take_message", "hangup_with_warning"],
+        enum: [
+          "transfer_authorized",
+          "redirect_to_caregiver",
+          "take_message",
+          "hangup_with_warning",
+        ],
       },
       tts_response_to_caller: { type: "string", maxLength: 280 },
       challenge_plan_for_cuidador: { type: "string", maxLength: 800 },
@@ -243,18 +249,30 @@ function isCanaryLeaked(
 
 function buildFailSafe(input: IdentityVerifierInput): IdentityVerifierDecision {
   const isUnknownCaller = input.whitelist_entry === null;
+  // Si el caller calza con whitelist pero la verificación no pudo completarse,
+  // derivamos a otro cuidador humano en lugar de "tomar mensaje" — más conservador
+  // ante un posible familiar real cuya verificación cayó por error técnico.
+  const failSafeOutcome: IdentityOutcome = isUnknownCaller
+    ? "hangup_with_warning"
+    : "redirect_to_caregiver";
   return {
     shared_word_status: "not_attempted",
     kba_status: "not_attempted",
     cross_channel_recommended: true,
     evasion_detected: false,
-    outcome: isUnknownCaller ? "hangup_with_warning" : "take_message",
+    outcome: failSafeOutcome,
     tts_response_to_caller:
-      "No puedo continuar la verificación en este momento. Voy a dejar tu mensaje para que te contactemos por canal seguro.",
+      failSafeOutcome === "redirect_to_caregiver"
+        ? `Voy a derivarte con un familiar de ${input.protected_name} que va a atender tu llamada.`
+        : "No puedo continuar la verificación en este momento. Voy a dejar tu mensaje para que te contactemos por canal seguro.",
     challenge_plan_for_cuidador:
-      "Verificación inconclusa por error técnico. No transfieras esta llamada. Antes de cualquier acción: (1) escucha el audio completo, (2) llama tú al número real del supuesto familiar (no al que aparece en el caller_id), (3) confirma la situación cara a cara o por canal alternativo conocido.",
+      failSafeOutcome === "redirect_to_caregiver"
+        ? "Verificación inconclusa por error técnico — el caller calza con whitelist. No transfieras la llamada. (1) Deriva a un cuidador secundario (otro familiar de confianza). (2) Que el cuidador llame al número real conocido del supuesto familiar y verifique la situación cara a cara o por canal alternativo."
+        : "Verificación inconclusa por error técnico. No transfieras esta llamada. Antes de cualquier acción: (1) escucha el audio completo, (2) llama tú al número real del supuesto familiar (no al que aparece en el caller_id), (3) confirma la situación cara a cara o por canal alternativo conocido.",
     rationale:
-      "Fail-safe: la verificación no pudo completarse (schema, canary o error de red). Default conservador per regla N1 (deny-by-default).",
+      failSafeOutcome === "redirect_to_caregiver"
+        ? "Fail-safe: la verificación no pudo completarse (schema, canary o error de red) y el caller calza con whitelist. Default conservador: deriva a otro cuidador humano antes de transferir o cortar."
+        : "Fail-safe: la verificación no pudo completarse (schema, canary o error de red). Default conservador per regla N1 (deny-by-default).",
     canary_present: false,
   };
 }
@@ -318,14 +336,22 @@ PROTOCOLO DE ANÁLISIS:
    - shared_word_status ∈ {proactively_disclosed, evasion}, O
    - whitelist_entry=null (caller desconocido — siempre out-of-band).
 
+REDIRECT_TO_CAREGIVER — cuándo usarlo:
+El cuarto outcome \`redirect_to_caregiver\` cubre la zona ambigua entre "transferir" y "tomar mensaje" / "cortar". Se usa cuando:
+(i) Whitelist hit + shared_word incorrecto pero NO hay evasion_detected (familiar real estresado).
+(ii) Whitelist hit + KBA fallido pero NO hay evasion_detected.
+(iii) policy=pass_after_verification + cross_channel_recommended=true + shared_word_status∈{incorrect, not_attempted} + evasion_detected=false.
+En estos casos, derivamos a un cuidador humano (hija, nieto, etc.) para que tome la decisión final out-of-band, en vez de cortar al posible familiar real ni transferir a la persona protegida sin verificar.
+
 5. OUTCOME — aplicar reglas en orden, primera que matchee gana:
    a) evasion_detected=true → "hangup_with_warning".
    b) shared_word_status="proactively_disclosed" → "take_message" (NUNCA transferir; señal de coerción/fuga).
    c) policy=take_message_only → "take_message" (sin importar shared_word/KBA).
    d) whitelist_entry=null → "take_message" (deny-by-default contra desconocidos).
    e) policy=always_pass + (shared_word_status="matched" OR kba_status="matched") + cross_channel_recommended=false → "transfer_authorized".
-   f) policy=pass_after_verification + (shared_word_status="matched" OR kba_status="matched") + cross_channel_recommended=true → "transfer_authorized" (asume ack pendiente — el orquestador lo confirmará cross-channel).
-   g) Cualquier otro caso → "take_message".
+   f) (NUEVO) whitelist_entry≠null + shared_word_status="incorrect" + evasion_detected=false + kba_status≠"matched" → "redirect_to_caregiver". Razón: el llamante calza con un familiar conocido pero falló el factor adicional sin señales de coerción/presión. Puede ser el familiar real estresado/borracho/confundido. Lo derivamos a otro humano de confianza para que valide.
+   g) policy=pass_after_verification + (shared_word_status="matched" OR kba_status="matched") + cross_channel_recommended=true → "transfer_authorized" (asume ack pendiente — el orquestador lo confirmará cross-channel).
+   h) Cualquier otro caso → "take_message".
 
 6. TTS_RESPONSE_TO_CALLER — máximo 2 frases, tono neutro y firme, español chileno claro:
    - NUNCA confirmes o niegues si la shared word fue correcta (oracle attack — V8 del threat model).
@@ -334,11 +360,13 @@ PROTOCOLO DE ANÁLISIS:
    - NUNCA digas "voy a tomar mensaje porque fallaste" — tono uniforme independiente del outcome.
    - TTS estándar de hangup (usar SIEMPRE en hangup_with_warning, sin variar): "No puedo continuar esta llamada. Si necesitas contactar a la persona, llama directamente al número oficial."
    - TTS estándar para take_message / verificación pendiente: "Voy a dejar tu mensaje y te vamos a devolver la llamada por un canal seguro."
+   - TTS estándar para \`redirect_to_caregiver\` (usar SIEMPRE, sin variar): "Voy a derivarte con un familiar de [protected_name] que va a atender tu llamada." Sin confirmar/negar el resultado del challenge (oracle attack guard).
 
 7. CHALLENGE_PLAN_FOR_CUIDADOR — pasos concretos para que el cuidador HUMANO termine la verificación offline (ya que el MVP no tiene WhatsApp / KBA random / cross-channel ack en vivo):
    - Lenguaje 65+, frases cortas, sin tecnicismos.
    - Si outcome=hangup_with_warning: explica brevemente que NO se debe devolver la llamada al número que apareció.
    - Si outcome=take_message: lista 2-3 acciones (ej. "1. Llama tú al número real del supuesto Pedro. 2. Pregúntale la palabra clave familiar (usa el hint provisto en CONTEXTO DE SESIÓN). 3. Si no la sabe, pídele que responda una de las KBA configuradas y verifica la respuesta correcta.").
+   - Si outcome=redirect_to_caregiver: explica brevemente por qué se derivó (ej. "la palabra clave no calzó pero las señales son ambiguas") y sugiere 1-2 pasos al cuidador secundario para que valide en vivo o devuelva la llamada al número conocido del familiar.
    - **NUNCA escribas la shared_word literal ni la respuesta KBA esperada en challenge_plan_for_cuidador** — solo el hint y los IDs/preguntas. La respuesta correcta queda solo en config server-side, NO sale al frontend.
    - Si outcome=transfer_authorized: explica brevemente por qué se autorizó (pero sin reproducir factores literales).
 

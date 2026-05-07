@@ -132,9 +132,11 @@ export function mockAudioProcessResponse(
             "Avisa al resto de la familia: el patrón se repite con varios adultos mayores en Chile.",
           ],
           regulatory_note: "",
+          counter_script_es:
+            "Voy a llamar a Sernac mientras hablamos. Dame tu nombre completo y RUT antes de seguir.",
           push_title: "Vigía: estafa detectada",
           push_body:
-            "Detectamos cuento del tío en el audio. NO devuelvas el llamado al número desconocido.",
+            "Detectamos cuento del tío en el audio. NO devuelvas la llamada al número desconocido.",
           canary_present: false,
         }
       : undefined;
@@ -142,6 +144,7 @@ export function mockAudioProcessResponse(
   return {
     ok: true,
     audio_id: cryptoRandomId(),
+    caller_id: "+56000000000",
     transcript_redacted: transcript,
     pii_summary: piiSummary,
     decision,
