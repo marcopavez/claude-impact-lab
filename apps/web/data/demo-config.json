@@ -1,6 +1,6 @@
 {
   "_comment": "Configuración demo de Vigía (MVP/PoC N20). Hardcoded para María, persona protegida del escenario de demo. Cargado in-memory por el Identity Verifier — NO persiste, NO sale del servidor. La configuración por cuidador real es V2 (con DB + auth).",
-  "_version": "1.0.0",
+  "_version": "1.1.0",
   "protected_person": {
     "first_name": "María",
     "relationship_label": "abuelita"
@@ -29,6 +29,68 @@
       "policy": "take_message_only",
       "shared_word_required": false,
       "cross_channel_phone_e164": null
+    }
+  ],
+  "_blacklist_comment": "Demo conceptual. En producción este listado se construye con webscraping respetuoso (1 req/s) sobre fuentes oficiales + cronjob semanal que hace diff incremental.",
+  "blacklist": [
+    {
+      "caller_id_e164": "+56222119988",
+      "display_name": "Esquema 'cuento del tío 2.0' — banco impostor",
+      "source": "CMF Alertas al público",
+      "source_url": "https://www.cmfchile.cl/portal/principal/613/w3-propertyvalue-43545.html",
+      "reason": "Suplantación de ejecutivo bancario para inducir transferencias urgentes",
+      "reported_at": "2026-04-15"
+    },
+    {
+      "caller_id_e164": "+56229447766",
+      "display_name": "Vishing impostor SII — falso reembolso",
+      "source": "Sernac — alertas vigentes",
+      "source_url": "https://www.sernac.cl/portal/619/w3-channel.html",
+      "reason": "Falso aviso de reembolso del SII solicitando datos de tarjeta",
+      "reported_at": "2026-04-22"
+    },
+    {
+      "caller_id_e164": "+56224431122",
+      "display_name": "Falso Carabineros — secuestro virtual",
+      "source": "PDI Cibercrimen — boletín",
+      "source_url": "https://www.pdichile.cl",
+      "reason": "Estafa de secuestro virtual; presión emocional sobre adultos mayores",
+      "reported_at": "2026-04-29"
+    }
+  ],
+  "_institutional_registry_comment": "Demo conceptual. En producción este listado se sincroniza vía webscraping respetuoso del Registro CMF Prestadores Fintec + Subtel asignación de numeración + cronjob semanal con verificación cross-source.",
+  "institutional_registry": [
+    {
+      "caller_id_e164": "+56226001234",
+      "display_name": "BancoEstado — Atención al cliente",
+      "category": "banco",
+      "source": "Registro CMF Prestadores",
+      "source_url": "https://www.cmfchile.cl",
+      "verified_at": "2026-04-30"
+    },
+    {
+      "caller_id_e164": "+56226375555",
+      "display_name": "Banco de Chile — Servicio al cliente",
+      "category": "banco",
+      "source": "Registro CMF Prestadores",
+      "source_url": "https://www.cmfchile.cl",
+      "verified_at": "2026-04-30"
+    },
+    {
+      "caller_id_e164": "+56224315000",
+      "display_name": "AFP Habitat — Mesa de ayuda",
+      "category": "afp",
+      "source": "Registro Superintendencia de Pensiones",
+      "source_url": "https://www.spensiones.cl",
+      "verified_at": "2026-04-30"
+    },
+    {
+      "caller_id_e164": "+56226000000",
+      "display_name": "Sernac — Consultas y reclamos",
+      "category": "organismo_publico",
+      "source": "Sitio oficial Sernac",
+      "source_url": "https://www.sernac.cl",
+      "verified_at": "2026-04-30"
     }
   ],
   "shared_word": {

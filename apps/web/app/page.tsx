@@ -1,15 +1,30 @@
 import { UploadForm } from "../components/UploadForm";
 import { PoweredByClaudeBadge } from "../components/PoweredByClaudeBadge";
 import { FontSizeToggle } from "../components/FontSizeToggle";
+import { ContactsManager } from "../components/ContactsManager";
 import { ShieldCheckIcon } from "../components/icons";
+import demoConfig from "../data/demo-config.json";
+import type {
+  BlacklistContact,
+  InstitutionalContact,
+  WhitelistContact,
+} from "../lib/api/contacts-mock.types";
 
 // Landing — single page demo público.
-// Estructura: header (branding + toggle texto + claim) → main (hero + form
-// + cómo funciona) → footer.
-// El UploadForm y FontSizeToggle son Client Components; el resto es
-// Server Component por default.
+// Estructura: header (branding + toggle texto + claim) → main (hero + contacts
+// firewall + form + cómo funciona) → footer.
+// El UploadForm, FontSizeToggle y ContactsManager son Client Components; el
+// resto es Server Component por default. La data inicial del firewall se lee
+// en el server desde data/demo-config.json y se pasa como props.
 
 export default function Page() {
+  const initialContacts = {
+    whitelist: demoConfig.whitelist as WhitelistContact[],
+    blacklist: demoConfig.blacklist as BlacklistContact[],
+    institutional:
+      demoConfig.institutional_registry as InstitutionalContact[],
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-[color:var(--color-bg)]">
       {/* ================== HEADER ================== */}
@@ -94,6 +109,9 @@ export default function Page() {
             </li>
           </ul>
         </section>
+
+        {/* Firewall de identidad — colapsable bajo el hero */}
+        <ContactsManager initial={initialContacts} />
 
         {/* Form */}
         <UploadForm />
