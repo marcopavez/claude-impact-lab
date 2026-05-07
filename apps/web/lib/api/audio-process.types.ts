@@ -5,6 +5,7 @@
 import type {
   CallTriageDecision,
   CallTriageFailReason,
+  WhitelistPolicy,
 } from "../agents/call-triage";
 import type {
   CaregiverNotifierDecision,
@@ -154,7 +155,50 @@ export type AudioProcessSuccess = {
    * Solo presente si vishing_analysis está presente.
    */
   confidence_band?: ConfidenceBand;
+  /**
+   * Atajo del firewall de identidad: cuando el caller_id matchea blacklist o
+   * whitelist en data/demo-config.json, el orquestador NO llama a STT ni a
+   * Claude — la cascada se cortocircuita y este campo describe el match. Si
+   * está presente, transcript_redacted="", models_used=["firewall.local"] y
+   * latency_ms.* todos 0 salvo total_ms (que mide solo el match).
+   */
+  early_exit?: EarlyExitMatch;
 };
+
+// ============================================================
+// Early-exit del firewall — match contra blacklist/whitelist
+// ============================================================
+
+/**
+ * Detalle del match firewall que cortocircuitó la cascada. Discriminado por
+ * `reason` para que la UI pueda renderizar texto y fuente apropiados sin re-
+ * mapear conceptos.
+ */
+export type EarlyExitMatch =
+  | {
+      reason: "blacklist_match";
+      caller_id: string;
+      /** Etiqueta humana de la entrada blacklist (ej. "Vishing impostor SII"). */
+      display_name: string;
+      /** Fuente que reportó el número (ej. "CMF Alertas al público"). */
+      source: string;
+      /** URL de la fuente, para que el cuidador verifique. */
+      source_url: string;
+      /** Razón textual de la entrada (ej. "Suplantación de ejecutivo bancario"). */
+      blacklist_reason: string;
+      /** ISO date del reporte (ej. "2026-04-15"). */
+      reported_at: string;
+    }
+  | {
+      reason: "whitelist_match";
+      caller_id: string;
+      /** Nombre del contacto confiable (ej. "Pedro"). */
+      display_name: string;
+      /** Relación con la persona protegida (ej. "nieto"). */
+      relationship: string;
+      /** Política aplicada al match. */
+      policy: WhitelistPolicy;
+    };
 
 // ============================================================
 // Response 4xx/5xx — error
