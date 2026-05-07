@@ -68,6 +68,27 @@
       "rationale": "Hijo whitelisted (policy: pass_after_verification). Sin urgencia, sin pedidos de datos. El Triage debe delegar al Identity Verifier (shared word + KBA + cross-channel ack). Demo del camino verde: el firewall protege pero NO bloquea ciegamente a la familia real."
     },
     {
+      "id": "nieto-happy-path",
+      "default": true,
+      "golden_set_ref": "verifier-nieto-shared-word-pass-001",
+      "expected_action": "delegate_to_identity_verifier",
+      "severity": "LOW",
+      "voice": {
+        "id": "0cheeVA5B3Cv6DGq65cT",
+        "name": "Marco-pick",
+        "hint": "voz seleccionada por Marco · stability media-alta + style bajo = entrega cálida y calmada de nieto que llama a su abuelita sin apuro",
+        "candidates_to_test": []
+      },
+      "voice_settings": {
+        "stability": 0.6,
+        "similarity_boost": 0.8,
+        "style": 0.3,
+        "use_speaker_boost": true
+      },
+      "text": "Hola abuelita, soy yo, Pedro, su nieto. ¿Cómo está? Le llamaba pa confirmarle que el sábado paso a verla a la hora del once. La Carla me dijo que usted andaba con ganas de kuchen de manzanita, así que paso a la feria de Ñuñoa y le llevo unas bien lindas. Cualquier cosa me avisa nomás, abuelita, un beso grande.",
+      "rationale": "Happy path canónico del nieto whitelisted (Pedro, +56987654321, policy pass_after_verification, shared_word_required=true). El audio matchea TODO el config demo: relationship_label 'abuelita', display_name 'Pedro', cross-reference a Carla (hija whitelisted), shared word 'manzanita' embebida en 'kuchen de manzanita' (no recitada como contraseña — natural), comuna Ñuñoa (matchea kba-2). Sin urgencia, sin pedidos de plata ni datos. El Triage delega al Identity Verifier; el Verifier resuelve outcome=pass porque la shared word aparece y todo cross-references el whitelist. Demo del camino verde end-to-end: el firewall NO bloquea a la familia real."
+    },
+    {
       "id": "oracle-shared-word",
       "default": false,
       "golden_set_ref": "triage-oracle-shared-word-001",

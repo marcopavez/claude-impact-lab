@@ -363,7 +363,7 @@ export function ContactsManager({ initial }: Props) {
           accent="danger"
           count={blacklist.length}
           syncButton={{
-            label: "Sincronizar con CMF y Sernac",
+            label: "Sincronizar a través de web scraping",
             loadingLabel: "Consultando feeds oficiales…",
             onClick: syncThreatFeeds,
             state: threatState,
