@@ -3,11 +3,13 @@
 // Toggle de tamaño de texto in-app — accesibilidad +65.
 //
 // El usuario adulto mayor frecuentemente no sabe Ctrl + (zoom del browser).
-// Este toggle multiplica --font-size-base por un factor (1 / 1.25 / 1.5)
-// que --font-size-base aplica via clamp() en globals.css.
+// Este toggle setea --font-scale (1 / 1.25 / 1.5) en el <html>; globals.css
+// lo aplica como multiplicador del font-size del <html>, así escalan todas
+// las unidades rem (botones, badges, headings, utilidades Tailwind text-*),
+// no solo lo que hereda del body.
 //
 // Persistido en localStorage; al mount lee el valor antes del primer paint
-// para evitar flicker. Se aplica al html.style.fontSize directamente.
+// para evitar flicker.
 
 import { useEffect, useState } from "react";
 
