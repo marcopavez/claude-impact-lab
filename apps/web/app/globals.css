@@ -6,7 +6,11 @@
  * Target: adultos mayores 65+ chilenos.
  *
  * Decisiones clave:
- *   - Texto base 19px (clamp 18-20px) para lectura cómoda sin perder layout.
+ *   - Fuente body: Atkinson Hyperlegible (diseñada para baja visión).
+ *   - Fuente display: Fraunces (serif cálida e institucional para H1 y
+ *     headline del verdict).
+ *   - Texto base 19-22px (clamp) multiplicado por --font-scale (1 / 1.25 / 1.5
+ *     según el FontSizeToggle in-app). Llega hasta 33px en máximo.
  *   - Paleta WCAG AAA: contraste ≥7:1 en texto normal, ≥4.5:1 en large text.
  *   - Focus ring siempre visible (3px outline + offset). NUNCA outline:none.
  *   - prefers-reduced-motion: animaciones cortas a 1ms y sin transform animado.
@@ -51,10 +55,18 @@
   --focus-ring-width: 3px;
   --focus-ring-offset: 3px;
 
-  /* Tipografía base — clamp asegura 18-20px sin overflow en mobile */
-  --font-size-base: clamp(1.125rem, 0.95rem + 0.5vw, 1.25rem);
+  /* Tipografía base — clamp asegura 19-22px sin overflow.
+   * --font-scale lo multiplica el FontSizeToggle (1 | 1.25 | 1.5). */
+  --font-scale: 1;
+  --font-size-base: calc(
+    clamp(1.1875rem, 1rem + 0.5vw, 1.375rem) * var(--font-scale)
+  );
   --line-height-base: 1.6;
-  --font-sans: "Inter", "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+  --font-sans:
+    var(--font-sans-vigia), "Atkinson Hyperlegible", "Segoe UI",
+    "Helvetica Neue", system-ui, sans-serif;
+  --font-display:
+    var(--font-display-vigia), "Fraunces", "Newsreader", Georgia, serif;
   --font-mono: "JetBrains Mono", "Consolas", "Liberation Mono", monospace;
 
   /* Touch target mínimo (WCAG 2.5.5) */
@@ -66,12 +78,15 @@
   --radius-lg: 1rem;
   --shadow-soft: 0 1px 2px rgba(28, 25, 23, 0.06),
     0 4px 12px rgba(28, 25, 23, 0.08);
+  --shadow-strong: 0 2px 4px rgba(28, 25, 23, 0.08),
+    0 12px 32px rgba(28, 25, 23, 0.12);
 }
 
 @theme inline {
   --color-background: var(--color-bg);
   --color-foreground: var(--color-text);
   --font-sans: var(--font-sans);
+  --font-display: var(--font-display);
   --font-mono: var(--font-mono);
 }
 
@@ -99,6 +114,13 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+}
+
+/* Display font para H1 y headline del verdict — más impacto emocional. */
+.font-display {
+  font-family: var(--font-display);
+  font-feature-settings: "ss01", "kern";
+  letter-spacing: -0.01em;
 }
 
 /* Foco visible permanente — :focus-visible para no molestar al click,
@@ -155,18 +177,21 @@ input[type="file"]::file-selector-button {
   justify-content: center;
   gap: 0.5rem;
   min-height: var(--touch-target-min);
-  padding: 0.75rem 1.5rem;
+  padding: 0.875rem 1.75rem;
   border-radius: var(--radius-md);
   background: var(--color-brand);
   color: var(--color-brand-fg);
-  font-weight: 600;
-  font-size: 1.0625rem;
+  font-weight: 700;
+  font-size: 1.125rem;
   border: 2px solid transparent;
   cursor: pointer;
-  transition: background 150ms ease;
+  transition: background 150ms ease, transform 150ms ease;
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--color-brand-strong);
+}
+.btn-primary:active:not(:disabled) {
+  transform: translateY(1px);
 }
 .btn-primary:disabled {
   background: var(--color-surface-3);
@@ -180,17 +205,37 @@ input[type="file"]::file-selector-button {
   justify-content: center;
   gap: 0.5rem;
   min-height: var(--touch-target-min);
-  padding: 0.75rem 1.5rem;
+  padding: 0.875rem 1.75rem;
   border-radius: var(--radius-md);
   background: var(--color-surface);
   color: var(--color-brand);
-  font-weight: 600;
-  font-size: 1.0625rem;
+  font-weight: 700;
+  font-size: 1.125rem;
   border: 2px solid var(--color-brand);
   cursor: pointer;
   transition: background 150ms ease;
 }
 .btn-secondary:hover {
+  background: var(--color-surface-2);
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: var(--touch-target-min);
+  padding: 0.5rem 0.875rem;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font-weight: 600;
+  font-size: 1rem;
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+.btn-ghost:hover {
   background: var(--color-surface-2);
 }
 
@@ -243,16 +288,34 @@ input[type="file"]::file-selector-button {
   }
 }
 
+/* Animación pulse suave para badges críticos en danger HIGH. */
+@keyframes vigia-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(153, 27, 27, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 16px rgba(153, 27, 27, 0);
+  }
+}
+.pulse-danger {
+  animation: vigia-pulse 1.8s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pulse-danger {
+    animation: none;
+  }
+}
+
 /* Drop-zone para drag-and-drop del audio. */
 .dropzone {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.75rem;
-  min-height: 9rem;
-  padding: 1.5rem;
-  border: 2px dashed var(--color-border-strong);
+  gap: 0.875rem;
+  min-height: 12rem;
+  padding: 2rem 1.5rem;
+  border: 3px dashed var(--color-border-strong);
   border-radius: var(--radius-md);
   background: var(--color-surface-2);
   text-align: center;
@@ -284,14 +347,58 @@ input[type="file"]::file-selector-button {
 
 /* Placeholder de PII redactado: hover/touch muestra tooltip. */
 .pii-placeholder {
-  display: inline-block;
-  padding: 0 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.0625rem 0.5rem;
   background: #fef3c7;
   color: #78350f;        /* on bg: 8.4:1 (AAA) */
-  border-radius: 0.25rem;
+  border-radius: 0.375rem;
   font-family: var(--font-mono);
-  font-size: 0.95em;
+  font-size: 0.875em;
   font-weight: 600;
   cursor: help;
   border: 1px solid #f59e0b;
+}
+
+/* Cuadro grande del verdict — barra de color full-width sobre header. */
+.verdict-stripe {
+  height: 0.625rem;
+  width: 100%;
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+}
+
+/* Stepper de loading. */
+.step-row {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  padding: 0.625rem 0;
+  border-bottom: 1px solid var(--color-surface-3);
+}
+.step-row:last-child {
+  border-bottom: none;
+}
+.step-row[data-state="done"] .step-icon {
+  color: var(--color-safe);
+}
+.step-row[data-state="active"] .step-icon {
+  color: var(--color-brand);
+}
+.step-row[data-state="pending"] .step-icon {
+  color: var(--color-border);
+}
+.step-row[data-state="active"] .step-label {
+  font-weight: 700;
+  color: var(--color-text);
+}
+.step-row[data-state="done"] .step-label {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--color-border);
+  text-decoration-thickness: 1px;
+}
+.step-row[data-state="pending"] .step-label {
+  color: var(--color-text-subtle);
 }

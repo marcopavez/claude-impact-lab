@@ -22,7 +22,7 @@ const MOCK_DECISIONS: Record<MockScenario, CallTriageDecision> = {
     intent_confidence: 0.96,
     action: "hangup_with_warning",
     tts_response:
-      "No puedo continuar esta llamada. Si necesitás contactar a la persona, llamá directamente al número oficial de la institución que dices representar.",
+      "No puedo continuar esta llamada. Si necesitas contactar a la persona, llama directamente al número oficial de la institución que dices representar.",
     evidence_of_social_engineering: [
       "menciona accidente de un familiar combinado con urgencia económica",
       "pide transferencia a cuenta vista recién creada",
@@ -41,7 +41,7 @@ const MOCK_DECISIONS: Record<MockScenario, CallTriageDecision> = {
     intent_confidence: 0.84,
     action: "hangup_with_warning",
     tts_response:
-      "No puedo continuar esta llamada. Si necesitás contactar a la persona, llamá directamente al número oficial de la institución que dices representar.",
+      "No puedo continuar esta llamada. Si necesitas contactar a la persona, llama directamente al número oficial de la institución que dices representar.",
     evidence_of_social_engineering: [
       "pide clave dinámica y CVV de la tarjeta",
       "dicta número de callback supuestamente oficial del banco",
@@ -126,10 +126,10 @@ export function mockAudioProcessResponse(
           summary:
             "Vigía detectó el cuento del tío chileno en este audio: emergencia familiar inventada + pedido urgente de dinero + cuenta destino dictada.",
           first_action:
-            "No devuelvas el llamado al número desconocido. Llamá vos al número del nieto que ya tenés agendado.",
+            "No devuelvas la llamada al número desconocido. Llama tú al número del nieto que ya tienes agendado.",
           secondary_actions: [
-            "Si entregaste algún dato bancario, denunciá a Sernac (sernac.cl) y a PDI Cibercrimen.",
-            "Avisá al resto de la familia: el patrón se repite con varios adultos mayores en Chile.",
+            "Si entregaste algún dato bancario, denuncia a Sernac (sernac.cl) y a PDI Cibercrimen.",
+            "Avisa al resto de la familia: el patrón se repite con varios adultos mayores en Chile.",
           ],
           regulatory_note: "",
           push_title: "Vigía: estafa detectada",

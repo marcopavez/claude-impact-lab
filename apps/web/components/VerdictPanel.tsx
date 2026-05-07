@@ -1,14 +1,21 @@
+"use client";
+
 // VerdictPanel — render del AudioProcessSuccess.
 //
-// Decisiones de UX:
-//   - Badge de severidad enorme (font-size 1.5rem, weight 700) — el cuidador
-//     debe entender el veredicto en <1 segundo.
-//   - Transcript con placeholders <RUT_REDACTED> renderizados como "chips" con
-//     tooltip explicativo para no asustar al usuario al ver el HTML literal.
-//   - Razonamiento + footer técnico colapsables vía <details>/<summary> nativo:
-//     accesibilidad gratis (Tab + Enter/Space), sin JS extra.
-//   - Botón "Analizar otro audio" para reset hace foco-trap implícito vía onReset.
+// Decisiones de UX (post-audit +65):
+//   - Barra superior coloreada full-width que comunica severidad ANTES
+//     de que el usuario empiece a leer.
+//   - Ícono SVG enorme (64px) + headline text-4xl/5xl con font-display.
+//     El verdict tiene que entenderse en <1 segundo.
+//   - Botón "Escuchar veredicto" usa Web Speech API nativa (es-CL).
+//     Esencial para baja visión y para confirmar entendimiento.
+//   - caregiver_message se muestra SIEMPRE expandido (es la acción que
+//     debe leer el cuidador). Vishing / Identity / Triage / Tech van
+//     colapsados por default — reduce scroll y carga cognitiva.
+//   - PII placeholders renderizan con candado SVG + label legible
+//     en lugar de "<RUT_REDACTED>" literal.
 
+import { useCallback, useEffect, useState } from "react";
 import type {
   AudioProcessSuccess,
   UiBadgeSeverity,
@@ -20,39 +27,69 @@ import {
   badgeSeverityForResponse,
 } from "../lib/api/audio-process.types";
 import { PoweredByClaudeBadge } from "./PoweredByClaudeBadge";
+import {
+  AlertOctagonIcon,
+  AlertTriangleIcon,
+  CheckCircleIcon,
+  InfoIcon,
+  LockIcon,
+  RefreshIcon,
+  ShieldCheckIcon,
+  VolumeIcon,
+  VolumeMuteIcon,
+} from "./icons";
 
 type Props = {
   result: AudioProcessSuccess;
   onReset: () => void;
 };
 
-const SEVERITY_STYLES: Record<
-  UiBadgeSeverity,
-  { bg: string; fg: string; border: string; ariaPrefix: string }
-> = {
+type SeverityStyle = {
+  bg: string;
+  fg: string;
+  border: string;
+  stripe: string;
+  ariaPrefix: string;
+  Icon: (props: { className?: string }) => React.JSX.Element;
+  pulse: boolean;
+};
+
+const SEVERITY_STYLES: Record<UiBadgeSeverity, SeverityStyle> = {
   danger: {
     bg: "var(--color-danger)",
     fg: "var(--color-danger-fg)",
     border: "var(--color-danger)",
+    stripe: "var(--color-danger)",
     ariaPrefix: "Riesgo alto:",
+    Icon: AlertOctagonIcon,
+    pulse: true,
   },
   warning: {
     bg: "var(--color-warning)",
     fg: "var(--color-warning-fg)",
     border: "var(--color-warning)",
+    stripe: "var(--color-warning)",
     ariaPrefix: "Atención:",
+    Icon: AlertTriangleIcon,
+    pulse: false,
   },
   neutral: {
     bg: "var(--color-neutral)",
     fg: "var(--color-neutral-fg)",
     border: "var(--color-neutral)",
+    stripe: "var(--color-neutral)",
     ariaPrefix: "Mensaje guardado:",
+    Icon: InfoIcon,
+    pulse: false,
   },
   safe: {
     bg: "var(--color-safe)",
     fg: "var(--color-safe-fg)",
     border: "var(--color-safe)",
+    stripe: "var(--color-safe)",
     ariaPrefix: "Llamada segura:",
+    Icon: ShieldCheckIcon,
+    pulse: false,
   },
 };
 
@@ -64,12 +101,20 @@ const PII_LABELS: Record<string, string> = {
   ACCOUNT: "Número de cuenta bancaria (oculto por seguridad)",
 };
 
+const PII_SHORT_LABELS: Record<string, string> = {
+  RUT: "RUT oculto",
+  PHONE: "Teléfono oculto",
+  CARD: "Tarjeta oculta",
+  IBAN: "Cuenta IBAN oculta",
+  ACCOUNT: "Cuenta oculta",
+};
+
 const PLACEHOLDER_REGEX =
   /<(RUT|PHONE|CARD|IBAN|ACCOUNT)_REDACTED>/g;
 
 /**
  * Render del transcript con cada `<XXX_REDACTED>` reemplazado por un span
- * con tooltip nativo (`title`) + aria-label, accesible por teclado.
+ * con candado + label legible + tooltip nativo, accesible por teclado.
  */
 function renderTranscript(transcript: string): React.ReactNode {
   if (!transcript) {
@@ -83,7 +128,6 @@ function renderTranscript(transcript: string): React.ReactNode {
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
-  // Reset state explícito porque la regex tiene flag g.
   PLACEHOLDER_REGEX.lastIndex = 0;
   let nodeKey = 0;
 
@@ -96,16 +140,18 @@ function renderTranscript(transcript: string): React.ReactNode {
       );
     }
     const kind = match[1];
-    const label = PII_LABELS[kind] ?? "Dato sensible oculto";
+    const longLabel = PII_LABELS[kind] ?? "Dato sensible oculto";
+    const shortLabel = PII_SHORT_LABELS[kind] ?? "Dato oculto";
     parts.push(
       <span
         key={nodeKey++}
         className="pii-placeholder"
-        title={label}
-        aria-label={label}
+        title={longLabel}
+        aria-label={longLabel}
         tabIndex={0}
       >
-        {match[0]}
+        <LockIcon className="w-3 h-3" />
+        <span>{shortLabel}</span>
       </span>,
     );
     lastIndex = match.index + match[0].length;
@@ -116,405 +162,538 @@ function renderTranscript(transcript: string): React.ReactNode {
   return parts;
 }
 
+/** Construye el texto que el TTS lee en voz alta. */
+function buildTtsText(args: {
+  ariaPrefix: string;
+  headline: string;
+  description: string;
+  firstAction?: string;
+}): string {
+  const parts: string[] = [];
+  parts.push(args.ariaPrefix);
+  parts.push(args.headline);
+  parts.push(args.description);
+  if (args.firstAction) {
+    parts.push("Lo primero que tienes que hacer:");
+    parts.push(args.firstAction);
+  }
+  return parts.join(". ");
+}
+
+/** Selecciona la mejor voz es-CL / es-* disponible en el browser. */
+function pickSpanishVoice(): SpeechSynthesisVoice | null {
+  if (typeof window === "undefined" || !window.speechSynthesis) return null;
+  const voices = window.speechSynthesis.getVoices();
+  const cl = voices.find((v) => v.lang === "es-CL");
+  if (cl) return cl;
+  const otherEs = voices.find((v) => v.lang.startsWith("es"));
+  return otherEs ?? null;
+}
+
 export function VerdictPanel({ result, onReset }: Props) {
   const severity = badgeSeverityForResponse(result);
   const sty = SEVERITY_STYLES[severity];
 
-  // Headline + descripción canónica vienen del Notifier cuando está disponible.
-  // Si la cascada se cortó en Triage, caemos al mapping clásico de action.
   const headline =
     result.caregiver_message?.headline ??
     ACTION_LABEL_ES[result.decision.action];
   const description =
     result.caregiver_message?.summary ??
     ACTION_DESCRIPTION_ES[result.decision.action];
+  const firstAction = result.caregiver_message?.first_action;
   const triageLabel = ACTION_LABEL_ES[result.decision.action];
-  const triageBadgeSty = SEVERITY_STYLES[badgeSeverityForAction(result.decision.action)];
+  const triageBadgeSty =
+    SEVERITY_STYLES[badgeSeverityForAction(result.decision.action)];
 
   const totalSeconds = (result.latency_ms.total_ms / 1000).toFixed(1);
   const primaryModel = result.models_used[0] ?? "claude-sonnet-4-6";
 
+  // ---------- TTS state ----------
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [ttsAvailable, setTtsAvailable] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      setTtsAvailable(true);
+      // El listado de voces a veces se carga async — forzamos un fetch
+      // para que pickSpanishVoice() funcione en el primer click.
+      window.speechSynthesis.getVoices();
+    }
+    return () => {
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
+  const speakOrStop = useCallback(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      return;
+    }
+    const text = buildTtsText({
+      ariaPrefix: sty.ariaPrefix,
+      headline,
+      description,
+      firstAction,
+    });
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "es-CL";
+    utterance.rate = 0.9;
+    utterance.pitch = 1;
+    const voice = pickSpanishVoice();
+    if (voice) utterance.voice = voice;
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+    setIsSpeaking(true);
+  }, [
+    isSpeaking,
+    sty.ariaPrefix,
+    headline,
+    description,
+    firstAction,
+  ]);
+
   return (
     <article
       aria-labelledby="verdict-title"
-      className="surface-card p-6 sm:p-8 flex flex-col gap-6"
+      className="surface-card overflow-hidden flex flex-col"
     >
-      {/* ================== Header con badge ================== */}
-      <header className="flex flex-col gap-3">
-        <p
-          className="text-sm uppercase tracking-wide font-semibold text-[color:var(--color-text-muted)]"
-          id="verdict-eyebrow"
-        >
-          Veredicto de Vigía
-        </p>
-        <div
-          role="status"
-          aria-live="polite"
-          className="inline-flex items-center self-start rounded-md px-4 py-3 text-2xl font-bold"
-          style={{
-            background: sty.bg,
-            color: sty.fg,
-            border: `2px solid ${sty.border}`,
-          }}
-          aria-label={`${sty.ariaPrefix} ${headline}`}
-        >
-          {headline}
-        </div>
-        <h2
-          id="verdict-title"
-          className="text-xl text-[color:var(--color-text)] leading-relaxed"
-        >
-          {description}
-        </h2>
-        <div>
-          <PoweredByClaudeBadge model={primaryModel} size="sm" />
-        </div>
-      </header>
+      {/* Barra superior coloreada — comunica severidad antes de leer. */}
+      <div
+        className="verdict-stripe"
+        style={{ background: sty.stripe }}
+        aria-hidden="true"
+      />
 
-      {/* ================== Acción primaria del cuidador ================== */}
-      {result.caregiver_message ? (
-        <section
-          aria-labelledby="caregiver-action-heading"
-          className="rounded-md border-2 p-4 flex flex-col gap-3"
-          style={{
-            borderColor: sty.border,
-            background: "var(--color-surface-2)",
-          }}
-        >
-          <h3
-            id="caregiver-action-heading"
-            className="text-lg font-semibold text-[color:var(--color-text)]"
+      <div className="p-6 sm:p-8 flex flex-col gap-6">
+        {/* ================== Header con badge gigante ================== */}
+        <header className="flex flex-col gap-4">
+          <p
+            className="text-sm uppercase tracking-wide font-semibold text-[color:var(--color-text-muted)]"
+            id="verdict-eyebrow"
           >
-            Lo primero que tenés que hacer
-          </h3>
-          <p className="text-lg leading-relaxed text-[color:var(--color-text)] font-medium">
-            {result.caregiver_message.first_action}
+            Veredicto de Vigía
           </p>
-          {result.caregiver_message.secondary_actions.length > 0 ? (
-            <div>
-              <p className="text-sm font-semibold text-[color:var(--color-text-muted)] mb-1">
-                Y después:
-              </p>
-              <ul className="list-disc pl-6 flex flex-col gap-1 text-[color:var(--color-text)]">
-                {result.caregiver_message.secondary_actions.map((a, i) => (
-                  <li key={i} className="leading-relaxed">
-                    {a}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {result.caregiver_message.regulatory_note.length > 0 ? (
-            <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-3)] p-3">
-              <p className="text-sm font-semibold text-[color:var(--color-text-muted)] mb-1">
-                Lo que dice la ley chilena:
-              </p>
-              <p className="text-[color:var(--color-text)] leading-relaxed">
-                {result.caregiver_message.regulatory_note}
-              </p>
-            </div>
-          ) : null}
-        </section>
-      ) : null}
 
-      {/* ================== Transcripción ================== */}
-      <section aria-labelledby="transcript-heading" className="flex flex-col gap-2">
-        <h3
-          id="transcript-heading"
-          className="text-lg font-semibold text-[color:var(--color-text)]"
-        >
-          Lo que dijo el llamante
-        </h3>
-        <p className="text-sm text-[color:var(--color-text-subtle)]">
-          Antes del análisis, Vigía revisa la transcripción en busca de RUT,
-          números de cuenta y teléfonos para ocultarlos automáticamente.
-        </p>
-        <div
-          className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 leading-relaxed text-[color:var(--color-text)]"
-          lang="es-CL"
-        >
-          {renderTranscript(result.transcript_redacted)}
-        </div>
-        {result.pii_summary.hits_count > 0 ? (
-          <p className="text-sm text-[color:var(--color-text-muted)]">
-            Vigía ocultó <strong>{result.pii_summary.hits_count}</strong> dato(s)
-            sensible(s) en la transcripción.
-          </p>
-        ) : (
-          <p className="text-sm text-[color:var(--color-text-subtle)]">
-            No se detectaron datos sensibles en la transcripción.
-          </p>
-        )}
-      </section>
-
-      {/* ================== Análisis profundo (Vishing Analyst) ================== */}
-      {result.vishing_analysis ? (
-        <details
-          className="surface-card border-0 bg-[var(--color-surface-2)] p-4"
-          open
-        >
-          <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base focus-visible:outline-2">
-            Análisis profundo de la llamada
-            <span className="ml-2 inline-block px-2 py-0.5 rounded text-xs font-mono bg-[var(--color-surface-3)] text-[color:var(--color-text-muted)]">
-              {result.vishing_analysis.verdict}
+          <div
+            role="status"
+            aria-live="polite"
+            className="flex items-start gap-4"
+            aria-label={`${sty.ariaPrefix} ${headline}`}
+          >
+            <span
+              aria-hidden="true"
+              className={`flex-shrink-0 inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 rounded-full ${
+                sty.pulse ? "pulse-danger" : ""
+              }`}
+              style={{
+                background: sty.bg,
+                color: sty.fg,
+              }}
+            >
+              <sty.Icon className="w-9 h-9 sm:w-11 sm:h-11" />
             </span>
-          </summary>
-          <div className="mt-3 flex flex-col gap-3 text-[color:var(--color-text)]">
-            <p className="leading-relaxed">
-              {result.vishing_analysis.thinking_summary}
+            <div className="flex flex-col gap-1 min-w-0">
+              <h1
+                id="verdict-title"
+                className="font-display text-3xl sm:text-4xl lg:text-5xl font-bold leading-tight text-[color:var(--color-text)]"
+              >
+                {headline}
+              </h1>
+              <p className="text-lg text-[color:var(--color-text-muted)] leading-relaxed">
+                {description}
+              </p>
+            </div>
+          </div>
+
+          {/* Acciones del verdict: TTS + badge Claude. */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            {ttsAvailable ? (
+              <button
+                type="button"
+                onClick={speakOrStop}
+                className="btn-secondary"
+                aria-pressed={isSpeaking}
+                aria-label={
+                  isSpeaking
+                    ? "Detener la lectura del veredicto"
+                    : "Escuchar el veredicto en voz alta"
+                }
+              >
+                {isSpeaking ? (
+                  <VolumeMuteIcon className="w-5 h-5" />
+                ) : (
+                  <VolumeIcon className="w-5 h-5" />
+                )}
+                <span>
+                  {isSpeaking ? "Detener lectura" : "Escuchar este resultado"}
+                </span>
+              </button>
+            ) : (
+              <span />
+            )}
+            <PoweredByClaudeBadge model={primaryModel} size="sm" />
+          </div>
+        </header>
+
+        {/* ================== Acción primaria (siempre visible) ================== */}
+        {result.caregiver_message ? (
+          <section
+            aria-labelledby="caregiver-action-heading"
+            className="rounded-md border-2 p-5 flex flex-col gap-4"
+            style={{
+              borderColor: sty.border,
+              background: "var(--color-surface-2)",
+            }}
+          >
+            <h2
+              id="caregiver-action-heading"
+              className="text-lg font-bold text-[color:var(--color-text)]"
+            >
+              Lo primero que tienes que hacer
+            </h2>
+            <p className="text-xl leading-relaxed text-[color:var(--color-text)] font-medium">
+              {result.caregiver_message.first_action}
             </p>
-            <p className="leading-relaxed">
-              {result.vishing_analysis.rationale_es}
-            </p>
-            {result.vishing_analysis.patterns_detected.length > 0 &&
-            result.vishing_analysis.patterns_detected[0] !== "none" ? (
+            {result.caregiver_message.secondary_actions.length > 0 ? (
               <div>
-                <p className="font-semibold mb-1">Patrones detectados:</p>
-                <ul className="list-disc pl-6 flex flex-col gap-1">
-                  {result.vishing_analysis.patterns_detected.map((p) => (
-                    <li key={p} className="leading-relaxed font-mono text-sm">
-                      {p}
+                <p className="text-sm font-semibold text-[color:var(--color-text-muted)] mb-2">
+                  Y después:
+                </p>
+                <ul className="list-disc pl-6 flex flex-col gap-1.5 text-[color:var(--color-text)]">
+                  {result.caregiver_message.secondary_actions.map((a, i) => (
+                    <li key={i} className="leading-relaxed">
+                      {a}
                     </li>
                   ))}
                 </ul>
               </div>
             ) : null}
-            {result.vishing_analysis.claimed_entity ? (
-              <p className="text-sm">
-                <span className="font-semibold">Entidad reclamada por el llamante:</span>{" "}
-                {result.vishing_analysis.claimed_entity}
-              </p>
+            {result.caregiver_message.regulatory_note.length > 0 ? (
+              <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-3)] p-3">
+                <p className="text-sm font-semibold text-[color:var(--color-text-muted)] mb-1">
+                  Lo que dice la ley chilena:
+                </p>
+                <p className="text-[color:var(--color-text)] leading-relaxed">
+                  {result.caregiver_message.regulatory_note}
+                </p>
+              </div>
             ) : null}
-          </div>
-        </details>
-      ) : null}
+          </section>
+        ) : null}
 
-      {/* ================== Verificación de identidad (Identity Verifier) ================== */}
-      {result.identity_check ? (
-        <details
-          className="surface-card border-0 bg-[var(--color-surface-2)] p-4"
-          open={result.identity_check.outcome !== "transfer_authorized"}
+        {/* ================== Transcripción (siempre visible) ================== */}
+        <section
+          aria-labelledby="transcript-heading"
+          className="flex flex-col gap-2"
         >
-          <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base focus-visible:outline-2">
-            Verificación de identidad del llamante
-            <span className="ml-2 inline-block px-2 py-0.5 rounded text-xs font-mono bg-[var(--color-surface-3)] text-[color:var(--color-text-muted)]">
-              {result.identity_check.outcome}
+          <h2
+            id="transcript-heading"
+            className="text-lg font-semibold text-[color:var(--color-text)]"
+          >
+            Lo que dijo el llamante
+          </h2>
+          <p className="text-sm text-[color:var(--color-text-subtle)]">
+            Antes del análisis, Vigía revisa la transcripción en busca de RUT,
+            números de cuenta y teléfonos para ocultarlos automáticamente.
+          </p>
+          <div
+            className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 leading-relaxed text-[color:var(--color-text)]"
+            lang="es-CL"
+          >
+            {renderTranscript(result.transcript_redacted)}
+          </div>
+          {result.pii_summary.hits_count > 0 ? (
+            <p className="text-sm text-[color:var(--color-text-muted)]">
+              Vigía ocultó <strong>{result.pii_summary.hits_count}</strong>{" "}
+              dato(s) sensible(s) en la transcripción.
+            </p>
+          ) : (
+            <p className="text-sm text-[color:var(--color-text-subtle)]">
+              No se detectaron datos sensibles en la transcripción.
+            </p>
+          )}
+        </section>
+
+        {/* ================== Análisis profundo (Vishing Analyst) ================== */}
+        {result.vishing_analysis ? (
+          <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+            <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base">
+              Análisis profundo de la llamada
+              <span className="ml-2 inline-block px-2 py-0.5 rounded text-xs font-mono bg-[var(--color-surface-3)] text-[color:var(--color-text-muted)]">
+                {result.vishing_analysis.verdict}
+              </span>
+            </summary>
+            <div className="mt-3 flex flex-col gap-3 text-[color:var(--color-text)]">
+              <p className="leading-relaxed">
+                {result.vishing_analysis.thinking_summary}
+              </p>
+              <p className="leading-relaxed">
+                {result.vishing_analysis.rationale_es}
+              </p>
+              {result.vishing_analysis.patterns_detected.length > 0 &&
+              result.vishing_analysis.patterns_detected[0] !== "none" ? (
+                <div>
+                  <p className="font-semibold mb-1">Patrones detectados:</p>
+                  <ul className="list-disc pl-6 flex flex-col gap-1">
+                    {result.vishing_analysis.patterns_detected.map((p) => (
+                      <li
+                        key={p}
+                        className="leading-relaxed font-mono text-sm"
+                      >
+                        {p}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {result.vishing_analysis.claimed_entity ? (
+                <p className="text-sm">
+                  <span className="font-semibold">
+                    Entidad reclamada por el llamante:
+                  </span>{" "}
+                  {result.vishing_analysis.claimed_entity}
+                </p>
+              ) : null}
+            </div>
+          </details>
+        ) : null}
+
+        {/* ================== Verificación de identidad (Identity Verifier) ================== */}
+        {result.identity_check ? (
+          <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+            <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base">
+              Verificación de identidad del llamante
+              <span className="ml-2 inline-block px-2 py-0.5 rounded text-xs font-mono bg-[var(--color-surface-3)] text-[color:var(--color-text-muted)]">
+                {result.identity_check.outcome}
+              </span>
+            </summary>
+            <div className="mt-3 flex flex-col gap-3 text-[color:var(--color-text)]">
+              <p className="leading-relaxed">
+                {result.identity_check.rationale}
+              </p>
+              <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-3)] p-3">
+                <p className="text-sm font-semibold text-[color:var(--color-text-muted)] mb-1">
+                  Plan de verificación humana sugerido:
+                </p>
+                <p className="leading-relaxed text-[color:var(--color-text)] whitespace-pre-wrap">
+                  {result.identity_check.challenge_plan_for_cuidador}
+                </p>
+              </div>
+              {result.identity_check.evasion_detected ? (
+                <p className="text-sm font-semibold text-[color:var(--color-danger)]">
+                  Vigía detectó señales de evasión o presión durante la
+                  conversación.
+                </p>
+              ) : null}
+            </div>
+          </details>
+        ) : null}
+
+        {/* ================== Citas regulatorias (Regulatory Translator) ================== */}
+        {result.regulatory && !result.regulatory.cite_or_silent &&
+        result.regulatory.citations.length > 0 ? (
+          <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+            <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base">
+              Citas regulatorias verificadas
+              <span className="ml-2 inline-block px-2 py-0.5 rounded text-xs font-mono bg-[var(--color-surface-3)] text-[color:var(--color-text-muted)]">
+                {result.regulatory.citations.length} cita
+                {result.regulatory.citations.length === 1 ? "" : "s"}
+              </span>
+            </summary>
+            <div className="mt-3 flex flex-col gap-4 text-[color:var(--color-text)]">
+              <p className="leading-relaxed">
+                {result.regulatory.translation_es}
+              </p>
+              <ul className="flex flex-col gap-3">
+                {result.regulatory.citations.map((c, i) => (
+                  <li
+                    key={i}
+                    className="rounded border border-[var(--color-border)] bg-[var(--color-surface-3)] p-3"
+                  >
+                    <p className="text-sm font-semibold text-[color:var(--color-text-muted)] mb-1">
+                      Fuente: {c.source_id}
+                    </p>
+                    <blockquote className="border-l-4 border-[var(--color-border)] pl-3 leading-relaxed italic">
+                      “{c.quote}”
+                    </blockquote>
+                    <a
+                      href={c.source_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-block text-sm underline text-[color:var(--color-brand)] break-all"
+                    >
+                      Ver en fuente oficial →
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </details>
+        ) : null}
+
+        {/* ================== Razonamiento del Triage (colapsable, cerrado) ================== */}
+        <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+          <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base">
+            Decisión inicial del Triage
+            <span
+              className="ml-2 inline-block px-2 py-0.5 rounded text-xs font-bold"
+              style={{
+                background: triageBadgeSty.bg,
+                color: triageBadgeSty.fg,
+                border: `1px solid ${triageBadgeSty.border}`,
+              }}
+            >
+              {triageLabel}
             </span>
           </summary>
           <div className="mt-3 flex flex-col gap-3 text-[color:var(--color-text)]">
-            <p className="leading-relaxed">{result.identity_check.rationale}</p>
-            <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-3)] p-3">
-              <p className="text-sm font-semibold text-[color:var(--color-text-muted)] mb-1">
-                Plan de verificación humana sugerido al cuidador:
+            <p className="leading-relaxed">{result.decision.rationale}</p>
+
+            {result.decision.evidence_of_social_engineering.length > 0 ? (
+              <div>
+                <p className="font-semibold mb-1">
+                  Señales detectadas en el primer pase:
+                </p>
+                <ul className="list-disc pl-6 flex flex-col gap-1">
+                  {result.decision.evidence_of_social_engineering.map(
+                    (item, idx) => (
+                      <li key={idx} className="leading-relaxed">
+                        {item}
+                      </li>
+                    ),
+                  )}
+                </ul>
+              </div>
+            ) : (
+              <p className="text-[color:var(--color-text-subtle)] italic">
+                No se identificaron señales de manipulación en el primer pase.
               </p>
-              <p className="leading-relaxed text-[color:var(--color-text)] whitespace-pre-wrap">
-                {result.identity_check.challenge_plan_for_cuidador}
-              </p>
-            </div>
-            {result.identity_check.evasion_detected ? (
-              <p className="text-sm font-semibold text-[color:var(--color-danger)]">
-                Vigía detectó señales de evasión / presión durante la verificación.
-              </p>
-            ) : null}
+            )}
           </div>
         </details>
-      ) : null}
 
-      {/* ================== Citas regulatorias (Regulatory Translator) ================== */}
-      {result.regulatory && !result.regulatory.cite_or_silent &&
-      result.regulatory.citations.length > 0 ? (
-        <details
-          className="surface-card border-0 bg-[var(--color-surface-2)] p-4"
-        >
-          <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base focus-visible:outline-2">
-            Citas regulatorias verificadas
-            <span className="ml-2 inline-block px-2 py-0.5 rounded text-xs font-mono bg-[var(--color-surface-3)] text-[color:var(--color-text-muted)]">
-              {result.regulatory.citations.length} cita
-              {result.regulatory.citations.length === 1 ? "" : "s"}
-            </span>
+        {/* ================== Pie técnico (colapsable, cerrado) ================== */}
+        <details className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+          <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base">
+            Detalles técnicos
           </summary>
-          <div className="mt-3 flex flex-col gap-4 text-[color:var(--color-text)]">
-            <p className="leading-relaxed">{result.regulatory.translation_es}</p>
-            <ul className="flex flex-col gap-3">
-              {result.regulatory.citations.map((c, i) => (
-                <li
-                  key={i}
-                  className="rounded border border-[var(--color-border)] bg-[var(--color-surface-3)] p-3"
-                >
-                  <p className="text-sm font-semibold text-[color:var(--color-text-muted)] mb-1">
-                    Fuente: {c.source_id}
-                  </p>
-                  <blockquote className="border-l-4 border-[var(--color-border)] pl-3 leading-relaxed italic">
-                    “{c.quote}”
-                  </blockquote>
-                  <a
-                    href={c.source_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2 inline-block text-sm underline text-[color:var(--color-text-link)] break-all"
-                  >
-                    Ver en fuente oficial →
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </details>
-      ) : null}
-
-      {/* ================== Razonamiento del Triage (colapsable) ================== */}
-      <details className="surface-card border-0 bg-[var(--color-surface-2)] p-4">
-        <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base focus-visible:outline-2">
-          Decisión inicial del Triage
-          <span
-            className="ml-2 inline-block px-2 py-0.5 rounded text-xs font-bold"
-            style={{
-              background: triageBadgeSty.bg,
-              color: triageBadgeSty.fg,
-              border: `1px solid ${triageBadgeSty.border}`,
-            }}
-          >
-            {triageLabel}
-          </span>
-        </summary>
-        <div className="mt-3 flex flex-col gap-3 text-[color:var(--color-text)]">
-          <p className="leading-relaxed">{result.decision.rationale}</p>
-
-          {result.decision.evidence_of_social_engineering.length > 0 ? (
+          <dl className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
             <div>
-              <p className="font-semibold mb-1">Señales detectadas en el primer pase:</p>
-              <ul className="list-disc pl-6 flex flex-col gap-1">
-                {result.decision.evidence_of_social_engineering.map(
-                  (item, idx) => (
-                    <li key={idx} className="leading-relaxed">
-                      {item}
-                    </li>
-                  ),
-                )}
-              </ul>
+              <dt className="text-sm font-semibold text-[color:var(--color-text-muted)]">
+                Modelos de Claude usados
+              </dt>
+              <dd className="mt-1 flex flex-wrap gap-2">
+                {result.models_used.map((m) => (
+                  <span
+                    key={m}
+                    className="inline-block px-2 py-1 rounded font-mono text-xs bg-[var(--color-surface-3)] text-[color:var(--color-text)]"
+                  >
+                    {m}
+                  </span>
+                ))}
+              </dd>
             </div>
-          ) : (
-            <p className="text-[color:var(--color-text-subtle)] italic">
-              No se identificaron señales de manipulación en el primer pase.
-            </p>
-          )}
+
+            <div>
+              <dt className="text-sm font-semibold text-[color:var(--color-text-muted)]">
+                Herramientas invocadas
+              </dt>
+              <dd className="mt-1 flex flex-wrap gap-2">
+                {result.tools_used.map((t) => (
+                  <span
+                    key={t}
+                    className="inline-block px-2 py-1 rounded font-mono text-xs bg-[var(--color-surface-3)] text-[color:var(--color-text)]"
+                  >
+                    {t}
+                  </span>
+                ))}
+              </dd>
+            </div>
+
+            <div>
+              <dt className="text-sm font-semibold text-[color:var(--color-text-muted)]">
+                Tiempo total de análisis
+              </dt>
+              <dd className="mt-1 text-[color:var(--color-text)]">
+                {totalSeconds} segundos
+              </dd>
+            </div>
+
+            <div>
+              <dt className="text-sm font-semibold text-[color:var(--color-text-muted)]">
+                Datos sensibles ocultados
+              </dt>
+              <dd className="mt-1 text-[color:var(--color-text)]">
+                {result.pii_summary.hits_count}
+              </dd>
+            </div>
+
+            <div className="sm:col-span-2">
+              <dt className="text-sm font-semibold text-[color:var(--color-text-muted)]">
+                Tiempo por agente
+              </dt>
+              <dd className="mt-1 flex flex-wrap gap-2 text-xs font-mono text-[color:var(--color-text)]">
+                <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
+                  STT: {result.latency_ms.stt_ms}ms
+                </span>
+                <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
+                  PII: {result.latency_ms.pii_redact_ms}ms
+                </span>
+                <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
+                  Triage: {result.latency_ms.triage_ms}ms
+                </span>
+                {typeof result.latency_ms.identity_ms === "number" ? (
+                  <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
+                    Identity: {result.latency_ms.identity_ms}ms
+                  </span>
+                ) : null}
+                {typeof result.latency_ms.vishing_ms === "number" ? (
+                  <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
+                    Vishing: {result.latency_ms.vishing_ms}ms
+                  </span>
+                ) : null}
+                {typeof result.latency_ms.regulatory_ms === "number" ? (
+                  <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
+                    Regulatory: {result.latency_ms.regulatory_ms}ms
+                  </span>
+                ) : null}
+                {typeof result.latency_ms.notifier_ms === "number" ? (
+                  <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
+                    Notifier: {result.latency_ms.notifier_ms}ms
+                  </span>
+                ) : null}
+              </dd>
+            </div>
+
+            <div className="sm:col-span-2">
+              <dt className="text-sm font-semibold text-[color:var(--color-text-muted)]">
+                Identificador del análisis
+              </dt>
+              <dd className="mt-1 font-mono text-xs text-[color:var(--color-text-subtle)] break-all">
+                {result.audio_id}
+              </dd>
+            </div>
+          </dl>
+        </details>
+
+        {/* ================== Reset ================== */}
+        <div className="flex flex-col sm:flex-row sm:justify-end gap-3">
+          <button
+            type="button"
+            onClick={onReset}
+            className="btn-primary"
+            aria-label="Volver al inicio para analizar otro audio"
+          >
+            <RefreshIcon className="w-5 h-5" />
+            <span>Analizar otro audio</span>
+          </button>
         </div>
-      </details>
-
-      {/* ================== Pie técnico (colapsable) ================== */}
-      <details className="surface-card border-0 bg-[var(--color-surface-2)] p-4">
-        <summary className="cursor-pointer font-semibold text-[color:var(--color-text)] text-base">
-          Detalles técnicos
-        </summary>
-        <dl className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
-          <div>
-            <dt className="text-sm font-semibold text-[color:var(--color-text-muted)]">
-              Modelos de Claude usados
-            </dt>
-            <dd className="mt-1 flex flex-wrap gap-2">
-              {result.models_used.map((m) => (
-                <span
-                  key={m}
-                  className="inline-block px-2 py-1 rounded font-mono text-xs bg-[var(--color-surface-3)] text-[color:var(--color-text)]"
-                >
-                  {m}
-                </span>
-              ))}
-            </dd>
-          </div>
-
-          <div>
-            <dt className="text-sm font-semibold text-[color:var(--color-text-muted)]">
-              Herramientas invocadas
-            </dt>
-            <dd className="mt-1 flex flex-wrap gap-2">
-              {result.tools_used.map((t) => (
-                <span
-                  key={t}
-                  className="inline-block px-2 py-1 rounded font-mono text-xs bg-[var(--color-surface-3)] text-[color:var(--color-text)]"
-                >
-                  {t}
-                </span>
-              ))}
-            </dd>
-          </div>
-
-          <div>
-            <dt className="text-sm font-semibold text-[color:var(--color-text-muted)]">
-              Tiempo total de análisis
-            </dt>
-            <dd className="mt-1 text-[color:var(--color-text)]">
-              {totalSeconds} segundos
-            </dd>
-          </div>
-
-          <div>
-            <dt className="text-sm font-semibold text-[color:var(--color-text-muted)]">
-              Datos sensibles ocultados
-            </dt>
-            <dd className="mt-1 text-[color:var(--color-text)]">
-              {result.pii_summary.hits_count}
-            </dd>
-          </div>
-
-          <div className="sm:col-span-2">
-            <dt className="text-sm font-semibold text-[color:var(--color-text-muted)]">
-              Tiempo por agente
-            </dt>
-            <dd className="mt-1 flex flex-wrap gap-2 text-xs font-mono text-[color:var(--color-text)]">
-              <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
-                STT: {result.latency_ms.stt_ms}ms
-              </span>
-              <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
-                PII: {result.latency_ms.pii_redact_ms}ms
-              </span>
-              <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
-                Triage: {result.latency_ms.triage_ms}ms
-              </span>
-              {typeof result.latency_ms.identity_ms === "number" ? (
-                <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
-                  Identity: {result.latency_ms.identity_ms}ms
-                </span>
-              ) : null}
-              {typeof result.latency_ms.vishing_ms === "number" ? (
-                <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
-                  Vishing: {result.latency_ms.vishing_ms}ms
-                </span>
-              ) : null}
-              {typeof result.latency_ms.regulatory_ms === "number" ? (
-                <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
-                  Regulatory: {result.latency_ms.regulatory_ms}ms
-                </span>
-              ) : null}
-              {typeof result.latency_ms.notifier_ms === "number" ? (
-                <span className="px-2 py-1 rounded bg-[var(--color-surface-3)]">
-                  Notifier: {result.latency_ms.notifier_ms}ms
-                </span>
-              ) : null}
-            </dd>
-          </div>
-
-          <div className="sm:col-span-2">
-            <dt className="text-sm font-semibold text-[color:var(--color-text-muted)]">
-              Identificador del análisis
-            </dt>
-            <dd className="mt-1 font-mono text-xs text-[color:var(--color-text-subtle)] break-all">
-              {result.audio_id}
-            </dd>
-          </div>
-        </dl>
-      </details>
-
-      {/* ================== Reset ================== */}
-      <div className="flex flex-col sm:flex-row sm:justify-end gap-3">
-        <button
-          type="button"
-          onClick={onReset}
-          className="btn-primary"
-          aria-label="Volver al inicio para analizar otro audio"
-        >
-          Analizar otro audio
-        </button>
       </div>
     </article>
   );

@@ -160,17 +160,17 @@ export type AudioProcessResponse = AudioProcessSuccess | AudioProcessError;
 export const ERROR_MESSAGES_ES: Record<AudioProcessErrorCode, string> = {
   NO_FILE: "No se adjuntó archivo de audio.",
   INVALID_MIME:
-    "El formato del audio no es compatible. Usá MP3, M4A, WAV o WebM.",
-  FILE_TOO_LARGE: "El archivo supera los 10 MB. Probá con un audio más corto.",
+    "El formato del audio no es compatible. Usa MP3, M4A, WAV o WebM.",
+  FILE_TOO_LARGE: "El archivo supera los 10 MB. Prueba con un audio más corto.",
   CONSENT_MISSING:
-    "Debés confirmar que el llamante fue notificado de la grabación.",
+    "Debes confirmar que el llamante fue notificado de la grabación.",
   INVALID_CALLER_ID:
     "El número del llamante debe estar en formato internacional (+56...).",
   STT_FAILED:
-    "No pudimos transcribir el audio. Verificá que se escucha y reintentá.",
+    "No pudimos transcribir el audio. Verifica que se escucha y reintenta.",
   TRIAGE_FAILED:
-    "El análisis no pudo completarse. Por seguridad, tratá la llamada como sospechosa.",
-  INTERNAL_ERROR: "Error inesperado. Reintentá en unos segundos.",
+    "El análisis no pudo completarse. Por seguridad, trata la llamada como sospechosa.",
+  INTERNAL_ERROR: "Error inesperado. Reintenta en unos segundos.",
 };
 
 /** Severidad del badge UI según action del Triage. */
@@ -229,7 +229,7 @@ export function badgeSeverityForResponse(
 export const ACTION_LABEL_ES: Record<CallTriageDecision["action"], string> = {
   hangup_with_warning: "Estafa detectada",
   delegate_to_identity_verifier: "Verificación pendiente",
-  lookup_cmf_then_take_message: "Verificá el banco",
+  lookup_cmf_then_take_message: "Verifica el banco",
   take_message: "Sin acciones urgentes",
   ask_clarifying_question: "Motivo poco claro",
   transfer_now: "Audio sin señales",
@@ -241,13 +241,13 @@ export const ACTION_DESCRIPTION_ES: Record<
   string
 > = {
   hangup_with_warning:
-    "Vigía detectó señales claras de estafa en este audio. No le devuelvas el llamado al número que llamó.",
+    "Vigía detectó señales claras de estafa en este audio. No devuelvas la llamada al número que llamó.",
   delegate_to_identity_verifier:
-    "El llamante dice ser familiar. Antes de devolver el llamado, verificá con palabra clave y llamá vos al número real conocido del familiar.",
+    "El llamante dice ser familiar. Antes de devolver la llamada, verifica con palabra clave y llama tú al número real conocido del familiar.",
   lookup_cmf_then_take_message:
-    "El llamante dice ser de un banco. Antes de cualquier acción, llamá vos al número oficial del banco que aparece en la tarjeta o sitio oficial.",
+    "El llamante dice ser de un banco. Antes de cualquier acción, llama tú al número oficial del banco que aparece en la tarjeta o el sitio oficial.",
   take_message:
-    "Llamada sin urgencia ni señales claras de estafa. Revisá el mensaje cuando puedas; no hay acción inmediata.",
+    "Llamada sin urgencia ni señales claras de estafa. Revisa el mensaje cuando puedas; no hay acción inmediata.",
   ask_clarifying_question:
     "El motivo del llamado no quedó claro en este audio. Conviene pedir aclaración antes de cualquier acción.",
   transfer_now:
