@@ -1,14 +1,19 @@
 "use client";
 
-// UploadForm — el corazón de la PWA: drag-drop + reproductor de
-// pre-validación + checkbox consentimiento + fields opcionales + submit
-// a /api/audio/process.
+// UploadForm — el corazón de la PWA: drag-drop + grabación en vivo con
+// micrófono + reproductor de pre-validación + checkbox consentimiento +
+// fields opcionales + submit a /api/audio/process.
 //
 // Validación client-side (pre-flight, no reemplaza la del servidor):
 //   - Tamaño: AUDIO_PROCESS_LIMITS.maxFileBytes
 //   - MIME: AUDIO_PROCESS_LIMITS.acceptedMimeTypes
 //   - Consent obligatorio
 //   - caller_id si está presente, debe matchear E.164 chileno
+//
+// Grabación con micrófono: usa getUserMedia + MediaRecorder. La grabación
+// queda como `File` con MIME audio/webm (Chrome/Edge/Firefox) o audio/mp4
+// (Safari) y se enchufa al mismo flujo que la subida — el endpoint acepta
+// ambos. Auto-stop a los 90s para no exceder la latencia objetivo (J3.3).
 //
 // Mock toggle: cuando NEXT_PUBLIC_MOCK_AUDIO_PROCESS === "1" usamos
 // mockAudioProcessResponse() en lugar del fetch real. Esto se quita
@@ -48,11 +53,52 @@ type FormStatus =
   | { kind: "success"; result: AudioProcessSuccess }
   | { kind: "error"; error: AudioProcessError };
 
+type RecordingState =
+  | { kind: "idle" }
+  | { kind: "requesting" }
+  | { kind: "recording"; startedAt: number; durationMs: number };
+
 // Acepta E.164 internacional con foco chileno; permite rangos generales por
 // si el cuidador anota un fijo o número extranjero.
 const E164_RE = /^\+[1-9]\d{6,14}$/;
 
 const ACCEPT_ATTR = AUDIO_PROCESS_LIMITS.acceptedMimeTypes.join(",");
+
+/** Cap defensivo: la cascada apunta a <30s E2E; 90s de audio + Scribe ya estresa J3.3. */
+const MAX_RECORDING_MS = 90_000;
+
+/** Candidatos por preferencia. Chrome/Edge/Firefox → webm; Safari → mp4. */
+const MIC_MIME_CANDIDATES = [
+  "audio/webm",
+  "audio/mp4",
+  "audio/ogg",
+] as const;
+
+function pickSupportedMicMime(): string | null {
+  if (typeof MediaRecorder === "undefined") return null;
+  for (const m of MIC_MIME_CANDIDATES) {
+    try {
+      if (MediaRecorder.isTypeSupported(m)) return m;
+    } catch {
+      // Ignorar: navegadores antiguos pueden lanzar al consultar tipos.
+    }
+  }
+  return null;
+}
+
+function extensionForMime(mime: string): string {
+  if (mime.startsWith("audio/mp4")) return "m4a";
+  if (mime.startsWith("audio/ogg")) return "ogg";
+  if (mime.startsWith("audio/wav") || mime.startsWith("audio/x-wav")) return "wav";
+  return "webm";
+}
+
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
 
 /** Mensaje de error client-side antes de hacer el POST. */
 type ClientPreflightError =
@@ -98,6 +144,18 @@ export function UploadForm() {
   const [clientError, setClientError] = useState<ClientPreflightError | null>(
     null,
   );
+
+  // Grabación con micrófono — mantenemos refs para los recursos imperativos
+  // (MediaRecorder, MediaStream, timers) y estado React para la UI.
+  const [recordingState, setRecordingState] = useState<RecordingState>({
+    kind: "idle",
+  });
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<number | null>(null);
+  const autoStopTimerRef = useRef<number | null>(null);
 
   // MOCK: lectura del flag a nivel render — se borra junto al import.
   const useMock = process.env.NEXT_PUBLIC_MOCK_AUDIO_PROCESS === "1";
@@ -159,6 +217,224 @@ export function UploadForm() {
     setClientError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
+
+  // Libera tracks del mic + timers. Idempotente: la llamamos en stop, en
+  // error y en unmount.
+  const releaseMicResources = useCallback(() => {
+    if (mediaStreamRef.current) {
+      for (const track of mediaStreamRef.current.getTracks()) {
+        try {
+          track.stop();
+        } catch {
+          // Ignorar: la pista puede ya estar detenida.
+        }
+      }
+      mediaStreamRef.current = null;
+    }
+    if (recordingTimerRef.current !== null) {
+      window.clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    if (autoStopTimerRef.current !== null) {
+      window.clearTimeout(autoStopTimerRef.current);
+      autoStopTimerRef.current = null;
+    }
+  }, []);
+
+  const startRecording = useCallback(async () => {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia
+    ) {
+      setRecordingError(
+        "Tu navegador no permite grabar audio. Prueba subiendo un archivo.",
+      );
+      return;
+    }
+    if (typeof MediaRecorder === "undefined") {
+      setRecordingError(
+        "Tu navegador no soporta grabación de audio. Prueba subiendo un archivo.",
+      );
+      return;
+    }
+
+    setRecordingError(null);
+    setClientError(null);
+    setRecordingState({ kind: "requesting" });
+
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      setRecordingState({ kind: "idle" });
+      if (err instanceof DOMException) {
+        if (
+          err.name === "NotAllowedError" ||
+          err.name === "PermissionDeniedError" ||
+          err.name === "SecurityError"
+        ) {
+          setRecordingError(
+            "Diste “no” al permiso del micrófono. Habilítalo desde la barra del navegador y vuelve a intentarlo.",
+          );
+          return;
+        }
+        if (
+          err.name === "NotFoundError" ||
+          err.name === "DevicesNotFoundError"
+        ) {
+          setRecordingError("No detectamos un micrófono en este dispositivo.");
+          return;
+        }
+      }
+      setRecordingError(
+        "No pudimos acceder al micrófono. Sube un archivo en su lugar.",
+      );
+      return;
+    }
+
+    mediaStreamRef.current = stream;
+    recordedChunksRef.current = [];
+
+    const preferredMime = pickSupportedMicMime();
+    let recorder: MediaRecorder;
+    try {
+      recorder = preferredMime
+        ? new MediaRecorder(stream, { mimeType: preferredMime })
+        : new MediaRecorder(stream);
+    } catch {
+      releaseMicResources();
+      setRecordingState({ kind: "idle" });
+      setRecordingError(
+        "Tu navegador no pudo iniciar la grabación. Prueba subiendo un archivo.",
+      );
+      return;
+    }
+    mediaRecorderRef.current = recorder;
+
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data && event.data.size > 0) {
+        recordedChunksRef.current.push(event.data);
+      }
+    });
+
+    recorder.addEventListener("stop", () => {
+      const reportedMime =
+        recorder.mimeType || preferredMime || "audio/webm";
+      // Algunos navegadores reportan "audio/webm;codecs=opus" — cortamos en ;.
+      const baseMime = reportedMime.split(";")[0]?.trim() || "audio/webm";
+      const mimeForFile = (
+        AUDIO_PROCESS_LIMITS.acceptedMimeTypes as readonly string[]
+      ).includes(baseMime)
+        ? baseMime
+        : "audio/webm";
+      const blob = new Blob(recordedChunksRef.current, { type: mimeForFile });
+      recordedChunksRef.current = [];
+
+      releaseMicResources();
+      setRecordingState({ kind: "idle" });
+
+      if (blob.size === 0) {
+        setRecordingError(
+          "No se grabó audio. Acerca el micrófono y vuelve a intentarlo.",
+        );
+        return;
+      }
+      if (blob.size > AUDIO_PROCESS_LIMITS.maxFileBytes) {
+        setRecordingError(
+          "La grabación supera los 10 MB. Intenta una grabación más corta.",
+        );
+        return;
+      }
+
+      const ts = new Date()
+        .toISOString()
+        .replace(/[:]/g, "-")
+        .replace(/\..+$/, "")
+        .replace(/T/, "_");
+      const recordedFile = new File(
+        [blob],
+        `grabacion-vigia-${ts}.${extensionForMime(mimeForFile)}`,
+        { type: mimeForFile },
+      );
+
+      setFile(recordedFile);
+      setClientError(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    });
+
+    recorder.addEventListener("error", () => {
+      releaseMicResources();
+      setRecordingState({ kind: "idle" });
+      setRecordingError(
+        "La grabación falló a mitad de camino. Reintenta o sube un archivo.",
+      );
+    });
+
+    try {
+      recorder.start();
+    } catch {
+      releaseMicResources();
+      setRecordingState({ kind: "idle" });
+      setRecordingError(
+        "No pudimos iniciar la grabación. Reintenta o sube un archivo.",
+      );
+      return;
+    }
+
+    const startedAt = Date.now();
+    setRecordingState({ kind: "recording", startedAt, durationMs: 0 });
+
+    recordingTimerRef.current = window.setInterval(() => {
+      setRecordingState((prev) =>
+        prev.kind === "recording"
+          ? { ...prev, durationMs: Date.now() - prev.startedAt }
+          : prev,
+      );
+    }, 250);
+
+    autoStopTimerRef.current = window.setTimeout(() => {
+      const r = mediaRecorderRef.current;
+      if (r && r.state === "recording") {
+        try {
+          r.stop();
+        } catch {
+          // El handler de stop ya hace cleanup.
+        }
+      }
+    }, MAX_RECORDING_MS);
+  }, [releaseMicResources]);
+
+  const stopRecording = useCallback(() => {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state === "recording") {
+      try {
+        recorder.stop();
+      } catch {
+        releaseMicResources();
+        setRecordingState({ kind: "idle" });
+      }
+    }
+  }, [releaseMicResources]);
+
+  // Cleanup al desmontar: detener recorder + liberar tracks + cancelar timers.
+  useEffect(() => {
+    return () => {
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state === "recording") {
+        try {
+          recorder.stop();
+        } catch {
+          // Ignorar.
+        }
+      }
+      releaseMicResources();
+    };
+  }, [releaseMicResources]);
+
+  const isRecording = recordingState.kind === "recording";
+  const isRequestingMic = recordingState.kind === "requesting";
+  const recordingDurationMs =
+    recordingState.kind === "recording" ? recordingState.durationMs : 0;
 
   const onSubmit = useCallback(
     async (e: React.FormEvent<HTMLFormElement>) => {
@@ -264,10 +540,16 @@ export function UploadForm() {
           htmlFor={`${formId}-file`}
           className="dropzone"
           data-active={dragActive ? "true" : "false"}
-          onDragOver={onDragOver}
-          onDragEnter={onDragOver}
-          onDragLeave={onDragLeave}
-          onDrop={onDrop}
+          aria-disabled={isRecording || isRequestingMic ? "true" : undefined}
+          onDragOver={isRecording || isRequestingMic ? undefined : onDragOver}
+          onDragEnter={isRecording || isRequestingMic ? undefined : onDragOver}
+          onDragLeave={isRecording || isRequestingMic ? undefined : onDragLeave}
+          onDrop={isRecording || isRequestingMic ? undefined : onDrop}
+          style={
+            isRecording || isRequestingMic
+              ? { opacity: 0.6, pointerEvents: "none" }
+              : undefined
+          }
         >
           <MicIcon
             className="w-12 h-12 text-[color:var(--color-brand)]"
@@ -306,6 +588,94 @@ export function UploadForm() {
         >
           Máximo 10 MB. Los formatos compatibles son MP3, M4A, WAV y WebM.
         </p>
+
+        {/* ==== Grabación con micrófono — alternativa al upload ==== */}
+        <div className="mt-4 flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <span
+              aria-hidden="true"
+              className="h-px flex-1 bg-[var(--color-border)]"
+            />
+            <span className="text-sm font-semibold uppercase tracking-wide text-[color:var(--color-text-subtle)]">
+              o
+            </span>
+            <span
+              aria-hidden="true"
+              className="h-px flex-1 bg-[var(--color-border)]"
+            />
+          </div>
+
+          {!isRecording ? (
+            <button
+              type="button"
+              onClick={startRecording}
+              disabled={isRequestingMic}
+              className="btn-secondary"
+              aria-label="Grabar audio en vivo desde el micrófono del dispositivo"
+              aria-describedby={`${formId}-mic-help`}
+            >
+              <MicIcon className="w-5 h-5" aria-hidden="true" />
+              <span>
+                {isRequestingMic
+                  ? "Pidiendo permiso del micrófono..."
+                  : file
+                    ? "Grabar otro audio con el micrófono"
+                    : "Grabar ahora con el micrófono"}
+              </span>
+            </button>
+          ) : (
+            <div
+              role="status"
+              aria-live="polite"
+              className="rounded-md border-2 border-[color:var(--color-danger)] bg-[var(--color-danger-bg)] p-4 flex flex-col gap-3"
+            >
+              <div className="flex items-center gap-3">
+                <span
+                  aria-hidden="true"
+                  className="inline-block w-3.5 h-3.5 rounded-full bg-[color:var(--color-danger)] motion-safe:animate-pulse"
+                />
+                <span className="font-semibold text-[color:var(--color-danger)]">
+                  Grabando
+                </span>
+                <span
+                  className="ml-auto font-mono text-lg tabular-nums text-[color:var(--color-text)]"
+                  aria-label={`Duración ${formatDuration(recordingDurationMs)}`}
+                >
+                  {formatDuration(recordingDurationMs)}
+                </span>
+              </div>
+              <p className="text-sm text-[color:var(--color-text-muted)]">
+                Habla cerca del micrófono. La grabación se detiene sola al{" "}
+                {Math.round(MAX_RECORDING_MS / 1000)}s.
+              </p>
+              <button
+                type="button"
+                onClick={stopRecording}
+                className="btn-primary self-start"
+                aria-label="Detener la grabación y usar el audio capturado"
+              >
+                <span>Detener grabación</span>
+              </button>
+            </div>
+          )}
+
+          <p
+            id={`${formId}-mic-help`}
+            className="text-sm text-[color:var(--color-text-subtle)]"
+          >
+            La grabación se procesa igual que un archivo subido: se transcribe,
+            se analiza y se descarta. Vigía no la guarda.
+          </p>
+
+          {recordingError ? (
+            <p
+              role="alert"
+              className="rounded-md border-l-4 border-[color:var(--color-danger)] bg-[var(--color-danger-bg)] px-4 py-3 text-[color:var(--color-danger)] font-semibold"
+            >
+              {recordingError}
+            </p>
+          ) : null}
+        </div>
 
         {/* Reproductor de pre-validación: el cuidador escucha el audio
          * antes de mandarlo, confirma que es el correcto. Botón quitar
@@ -453,7 +823,12 @@ export function UploadForm() {
         <button
           type="submit"
           className="btn-primary"
-          aria-label="Enviar el audio para que Vigía lo analice"
+          disabled={isRecording || isRequestingMic}
+          aria-label={
+            isRecording
+              ? "Detén la grabación antes de enviar"
+              : "Enviar el audio para que Vigía lo analice"
+          }
         >
           Analizar audio con Vigía
         </button>
