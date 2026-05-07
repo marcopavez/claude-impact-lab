@@ -23,9 +23,16 @@ import type {
 import {
   ACTION_DESCRIPTION_ES,
   ACTION_LABEL_ES,
+  AUDIO_PROCESS_LIMITS,
   badgeSeverityForAction,
   badgeSeverityForResponse,
+  CONFIDENCE_DESCRIPTION_ES,
+  CONFIDENCE_LABEL_ES,
 } from "../lib/api/audio-process.types";
+import { CaregiverRedirectCard } from "./CaregiverRedirectCard";
+import { CounterScriptCard } from "./CounterScriptCard";
+import { DenunciaCard } from "./DenunciaCard";
+import { PersonalBlacklistButton } from "./PersonalBlacklistButton";
 import { PoweredByClaudeBadge } from "./PoweredByClaudeBadge";
 import {
   AlertOctagonIcon,
@@ -387,6 +394,21 @@ export function VerdictPanel({ result, onReset }: Props) {
           </section>
         ) : null}
 
+        {/* ================== Derivación a humano de confianza ================== */}
+        {result.caregiver_redirect ? (
+          <CaregiverRedirectCard redirect={result.caregiver_redirect} />
+        ) : null}
+
+        {/* ================== Frase defensiva para futuras llamadas ================== */}
+        {result.caregiver_message?.counter_script_es ? (
+          <CounterScriptCard
+            counterScript={result.caregiver_message.counter_script_es}
+          />
+        ) : null}
+
+        {/* ================== Plan de denuncia pre-rellenado ================== */}
+        {result.denuncia ? <DenunciaCard denuncia={result.denuncia} /> : null}
+
         {/* ================== Transcripción (siempre visible) ================== */}
         <section
           aria-labelledby="transcript-heading"
@@ -418,6 +440,24 @@ export function VerdictPanel({ result, onReset }: Props) {
               No se detectaron datos sensibles en la transcripción.
             </p>
           )}
+          {result.caller_id !== AUDIO_PROCESS_LIMITS.defaultCallerId ? (
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-2">
+              <span className="text-sm text-[color:var(--color-text-muted)]">
+                Número del llamante:{" "}
+                <span className="font-mono text-[color:var(--color-text)]">
+                  {result.caller_id}
+                </span>
+              </span>
+              <PersonalBlacklistButton
+                callerId={result.caller_id}
+                defaultReason={
+                  result.caregiver_message?.headline ??
+                  "Llamada sospechosa detectada por Vigía"
+                }
+                sourceAudioId={result.audio_id}
+              />
+            </div>
+          ) : null}
         </section>
 
         {/* ================== Análisis profundo (Vishing Analyst) ================== */}
@@ -428,6 +468,15 @@ export function VerdictPanel({ result, onReset }: Props) {
               <span className="ml-2 inline-block px-2 py-0.5 rounded text-xs font-mono bg-[var(--color-surface-3)] text-[color:var(--color-text-muted)]">
                 {result.vishing_analysis.verdict}
               </span>
+              {result.confidence_band ? (
+                <span
+                  title={CONFIDENCE_DESCRIPTION_ES[result.confidence_band]}
+                  aria-label={CONFIDENCE_DESCRIPTION_ES[result.confidence_band]}
+                  className="ml-2 inline-block px-2 py-0.5 rounded text-xs font-semibold bg-[var(--color-surface-3)] text-[color:var(--color-text)] border border-[var(--color-border)]"
+                >
+                  {CONFIDENCE_LABEL_ES[result.confidence_band]}
+                </span>
+              ) : null}
             </summary>
             <div className="mt-3 flex flex-col gap-3 text-[color:var(--color-text)]">
               <p className="leading-relaxed">

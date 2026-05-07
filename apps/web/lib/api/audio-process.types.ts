@@ -103,6 +103,13 @@ export type AudioProcessSuccess = {
   ok: true;
   /** UUID v4 generado in-memory. Solo para correlación de logs/UI; NO persiste. */
   audio_id: string;
+  /**
+   * Echo del caller_id E.164 que mandó el formulario (default
+   * AUDIO_PROCESS_LIMITS.defaultCallerId si no se envió). Necesario en UI
+   * para permitir agregar el número a la blacklist personal del usuario
+   * (IndexedDB) o derivarlo a las acciones del veredicto.
+   */
+  caller_id: string;
   /** Transcript con PII determinísticamente redactada (RUT, móviles, cuentas, etc.). */
   transcript_redacted: string;
   /** Resumen de la redacción aplicada — útil para que el cuidador entienda qué se filtró. */
@@ -128,6 +135,25 @@ export type AudioProcessSuccess = {
   canary_present: boolean;
   /** Si el Triage cayó a fail-safe (canary_leaked / schema_invalid / model_error), aquí va el motivo. */
   fail_reason?: CallTriageFailReason;
+  /**
+   * Recomendación de derivar a un humano de confianza cuando la cascada quedó
+   * en zona ambigua (whitelist hit + shared word incorrecto, claim familiar
+   * no verificado, severity MEDIUM con cross_channel_recommended). Solo presente
+   * si identity_check.outcome === "redirect_to_caregiver".
+   */
+  caregiver_redirect?: CaregiverRedirect;
+  /**
+   * Texto de denuncia pre-rellenado + links a portales oficiales (PDI, Sernac,
+   * CSIRT). Generado deterministamente en el orquestador (sin LLM extra). Solo
+   * presente cuando severity ≥ MEDIUM o verdict ∈ {fraud, suspicious}.
+   */
+  denuncia?: DenunciaPayload;
+  /**
+   * Banda de confianza derivada deterministamente desde vishing_analysis.confidence
+   * para mostrarla en UI como "alta / media / baja" en vez de un número crudo.
+   * Solo presente si vishing_analysis está presente.
+   */
+  confidence_band?: ConfidenceBand;
 };
 
 // ============================================================
@@ -252,4 +278,121 @@ export const ACTION_DESCRIPTION_ES: Record<
     "El motivo del llamado no quedó claro en este audio. Conviene pedir aclaración antes de cualquier acción.",
   transfer_now:
     "Audio sin señales de estafa. No hay acciones urgentes para el cuidador.",
+};
+
+// ============================================================
+// Caregiver redirect — cuarto outcome del Identity Verifier
+// ============================================================
+
+/**
+ * Información mínima del cuidador humano al que se debería derivar la llamada
+ * cuando la verificación quedó ambigua (whitelist hit + shared_word incorrecto,
+ * claim familiar no verificado, etc.). El teléfono SIEMPRE viaja enmascarado
+ * al frontend para evitar exponer PII en el response.
+ */
+export type CaregiverRedirect = {
+  /** Nombre de pila del cuidador. */
+  name: string;
+  /** "hija", "hijo", "nieto", "nieta", "yerno", etc. */
+  role: string;
+  /** Teléfono enmascarado para mostrar al usuario, ej. "+569****5678". */
+  phone_e164_masked: string;
+  /** Razón en español 65+, ≤200 chars, por qué se derivó a este cuidador. */
+  reason_es: string;
+};
+
+/**
+ * Enmascara un teléfono E.164 chileno preservando los últimos 4 dígitos.
+ *   "+56987654321" → "+569****4321"
+ *   "+56222119988" → "+5622****9988"
+ * Para números que no calzan con el patrón chileno, conserva los últimos 4 dígitos.
+ */
+export function maskPhoneE164(e164: string): string {
+  if (!e164 || e164.length < 6) return "+******";
+  const cleaned = e164.startsWith("+") ? e164 : `+${e164}`;
+  const last4 = cleaned.slice(-4);
+  if (cleaned.startsWith("+569") && cleaned.length === 12) {
+    return `+569****${last4}`;
+  }
+  if (cleaned.startsWith("+56") && cleaned.length === 12) {
+    return `+56${cleaned.slice(3, 5)}****${last4}`;
+  }
+  const visible = cleaned.slice(0, Math.max(3, cleaned.length - 8));
+  return `${visible}****${last4}`;
+}
+
+// ============================================================
+// Confidence band — derivada de vishing_analysis.confidence
+// ============================================================
+
+export type ConfidenceBand = "low" | "medium" | "high";
+
+/**
+ * Thresholds explícitos para la banda. Diseñados para que la "zona ambigua"
+ * coincida con el mismo rango donde el Identity Verifier debería evaluar
+ * outcome=redirect_to_caregiver (confidence ∈ [0.4, 0.7] aprox).
+ */
+export const CONFIDENCE_THRESHOLDS = {
+  /** confidence < 0.5 → band "low" */
+  lowMax: 0.5,
+  /** confidence ≥ 0.8 → band "high"; entre 0.5 y 0.8 → "medium" */
+  highMin: 0.8,
+} as const;
+
+export function confidenceBand(confidence: number): ConfidenceBand {
+  if (!Number.isFinite(confidence)) return "low";
+  if (confidence < CONFIDENCE_THRESHOLDS.lowMax) return "low";
+  if (confidence < CONFIDENCE_THRESHOLDS.highMin) return "medium";
+  return "high";
+}
+
+export const CONFIDENCE_LABEL_ES: Record<ConfidenceBand, string> = {
+  low: "Confianza baja",
+  medium: "Confianza media",
+  high: "Confianza alta",
+};
+
+export const CONFIDENCE_DESCRIPTION_ES: Record<ConfidenceBand, string> = {
+  low: "Vigía no encontró suficiente evidencia para estar seguro. Trata el audio con cautela y verifica antes de actuar.",
+  medium:
+    "Vigía detectó señales pero no son concluyentes. Conviene validar con un humano de confianza antes de actuar.",
+  high: "Vigía está seguro de su análisis: hay evidencia clara para sostener el veredicto.",
+};
+
+// ============================================================
+// Denuncia payload — generado deterministamente en el orquestador
+// ============================================================
+
+export type DenunciaLeyPrincipal = {
+  /** Número de la ley (ej. "21.459"). */
+  numero: string;
+  /** Nombre corto ciudadano (ej. "Ley de Delitos Informáticos"). */
+  nombre_corto: string;
+  /** URL canónica BCN para que el cuidador verifique. */
+  url: string;
+};
+
+export type DenunciaLink = {
+  /** Etiqueta amigable (ej. "PDI Cibercrimen"). */
+  label: string;
+  /** URL del portal oficial de denuncia. */
+  url: string;
+};
+
+export type DenunciaPayload = {
+  /**
+   * Texto pre-rellenado que el cuidador puede copiar al portapapeles y pegar
+   * en el formulario oficial de denuncia. Lenguaje 65+, sin jerga jurídica,
+   * cita la ley_principal por número, ≤2500 chars.
+   */
+  texto_denuncia: string;
+  /** Ley principal citada en el texto. */
+  ley_principal: DenunciaLeyPrincipal;
+  /** Links a portales oficiales (≥1, típicamente PDI + Sernac + denuncia.cl). */
+  links_denuncia: DenunciaLink[];
+  /**
+   * Patrones de vishing que motivan la denuncia (vienen de vishing_analysis.patterns_detected
+   * o, si no hubo Vishing Analyst, derivados del Triage). ≥1.
+   */
+  patrones_motivantes: string[];
 };

@@ -11,20 +11,27 @@
 import { randomUUID } from "node:crypto";
 
 import { runCallTriage } from "@/lib/agents/call-triage";
-import { runCaregiverNotifier } from "@/lib/agents/caregiver-notifier";
+import {
+  deriveSeverity,
+  runCaregiverNotifier,
+} from "@/lib/agents/caregiver-notifier";
 import { runIdentityVerifier } from "@/lib/agents/identity-verifier";
 import { runRegulatoryTranslator } from "@/lib/agents/regulatory-translator";
 import { runVishingAnalyst } from "@/lib/agents/vishing-analyst";
 import { transcribeAudio } from "@/lib/clients/elevenlabs";
 import { httpSourceFetcher } from "@/lib/clients/source-fetcher";
+import { buildDenuncia } from "@/lib/denuncia/build-denuncia";
 import { logError } from "@/lib/log";
 import { redact } from "@/lib/validators/pii";
 import {
   AUDIO_PROCESS_LIMITS,
+  confidenceBand,
+  maskPhoneE164,
   type AcceptedMimeType,
   type AudioProcessError,
   type AudioProcessErrorCode,
   type AudioProcessSuccess,
+  type CaregiverRedirect,
   type CascadeStatuses,
   type LatencyBreakdown,
   type PiiRedactionSummary,
@@ -470,11 +477,13 @@ export async function POST(request: Request): Promise<Response> {
             summary:
               "El análisis se completó parcialmente. Por seguridad tratamos este audio como sospechoso.",
             first_action:
-              "No devuelvas el llamado al número que apareció. Si era importante, llamá vos al número oficial.",
+              "No devuelvas la llamada al número que apareció. Si era importante, llama tú al número oficial.",
             secondary_actions: [],
             regulatory_note: "",
+            counter_script_es:
+              "Cuelgo y te llamo yo al número oficial. Si era importante, dejame mensaje en mi número fijo.",
             push_title: "Vigía: verificación pendiente",
-            push_body: "Análisis parcial. Llamá vos al número oficial.",
+            push_body: "Análisis parcial. Llama tú al número oficial.",
             canary_present: false,
           },
           canary_token: "",
@@ -546,7 +555,51 @@ export async function POST(request: Request): Promise<Response> {
         : translation.slice(0, Math.max(0, room - 1)).trimEnd() + "…");
   }
 
-  // ----- 12. Build success response -----
+  // ----- 12. Caregiver redirect (cuarto outcome del Identity Verifier) -----
+  let caregiverRedirect: CaregiverRedirect | undefined;
+  if (identityDecision?.outcome === "redirect_to_caregiver") {
+    const primaryCaregiver =
+      demoConfig.caregivers.find((c) => c.is_primary) ??
+      demoConfig.caregivers[0];
+    if (primaryCaregiver) {
+      const reason =
+        identityDecision.rationale.length > 0
+          ? `Vigía derivó la llamada porque ${identityDecision.rationale.toLowerCase()}`.slice(
+              0,
+              200,
+            )
+          : "La verificación quedó en zona ambigua. Un cuidador humano debe validar antes de transferir.";
+      caregiverRedirect = {
+        name: primaryCaregiver.name,
+        role: primaryCaregiver.role,
+        phone_e164_masked: maskPhoneE164(primaryCaregiver.phone_e164),
+        reason_es: reason,
+      };
+    }
+  }
+
+  // ----- 13. Denuncia pre-rellenada (determinista, sin LLM extra) -----
+  // Si el Notifier emitió severity la usamos; si cayó antes de invocarlo,
+  // derivamos con la misma función authoritative para no perder cobertura.
+  const severityForDenuncia = notifierDecision
+    ? notifierDecision.severity
+    : deriveSeverity({
+        triage_decision: triageDecision,
+        identity_decision: identityDecision,
+        vishing_decision: vishingDecision,
+        protected_name: protectedName,
+      });
+  const denuncia = buildDenuncia({
+    severity: severityForDenuncia,
+    caller_id: callerId,
+    triage: triageDecision,
+    vishing: vishingDecision,
+  });
+  if (denuncia) {
+    toolsUsed.push("deterministic.buildDenuncia");
+  }
+
+  // ----- 14. Build success response -----
   const latency: LatencyBreakdown = {
     stt_ms: sttElapsed,
     pii_redact_ms: redactElapsed,
@@ -567,6 +620,7 @@ export async function POST(request: Request): Promise<Response> {
   const success: AudioProcessSuccess = {
     ok: true,
     audio_id: audioId,
+    caller_id: callerId,
     transcript_redacted: piiResult.redacted,
     pii_summary: piiSummary,
     decision: triageDecision,
@@ -580,6 +634,11 @@ export async function POST(request: Request): Promise<Response> {
     latency_ms: latency,
     canary_present: canaryPresent,
     ...(triageFailReason && { fail_reason: triageFailReason }),
+    ...(caregiverRedirect && { caregiver_redirect: caregiverRedirect }),
+    ...(denuncia && { denuncia }),
+    ...(vishingDecision && {
+      confidence_band: confidenceBand(vishingDecision.confidence),
+    }),
   };
 
   return Response.json(success, { status: 200 });

@@ -13,10 +13,11 @@
 // Alertas, Sernac, PDI Cibercrimen, Registro CMF Prestadores y Subtel. La UI
 // declara explícitamente que ese flujo es viable pero no implementado en MVP.
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 
 import {
   AlertOctagonIcon,
+  BanIcon,
   InfoIcon,
   LoaderIcon,
   RefreshIcon,
@@ -30,6 +31,12 @@ import type {
   ThreatFeedSyncResponse,
   WhitelistContact,
 } from "../lib/api/contacts-mock.types";
+import {
+  listPersonalBlacklist,
+  PERSONAL_BLACKLIST_EVENT,
+  type PersonalBlacklistEntry,
+  removeFromPersonalBlacklist,
+} from "../lib/storage/personal-blacklist";
 
 type Props = {
   initial: {
@@ -75,6 +82,17 @@ function formatPhone(e164: string): string {
   return e164;
 }
 
+function formatDateChile(iso: string): string {
+  // Formato corto chileno: "06-05-2026". Si la fecha no parsea, devolvemos
+  // el ISO crudo para no romper el render.
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}-${mm}-${yyyy}`;
+}
+
 export function ContactsManager({ initial }: Props) {
   const [whitelist, setWhitelist] = useState<WhitelistContact[]>(
     initial.whitelist,
@@ -92,6 +110,43 @@ export function ContactsManager({ initial }: Props) {
   const [registryState, setRegistryState] = useState<SyncState>({
     kind: "idle",
   });
+
+  // Blacklist personal del usuario (IndexedDB, client-only). Se hidrata en
+  // mount + se refresca via custom event para mantenerse en sync con el
+  // PersonalBlacklistButton del VerdictPanel.
+  const [personalBlacklist, setPersonalBlacklist] = useState<
+    PersonalBlacklistEntry[]
+  >([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function refresh() {
+      const entries = await listPersonalBlacklist();
+      if (!cancelled) {
+        // Más reciente primero — el cuidador suele querer ver lo último que bloqueó.
+        entries.sort((a, b) => b.added_at.localeCompare(a.added_at));
+        setPersonalBlacklist(entries);
+      }
+    }
+    void refresh();
+    function onChanged() {
+      void refresh();
+    }
+    window.addEventListener(PERSONAL_BLACKLIST_EVENT, onChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(PERSONAL_BLACKLIST_EVENT, onChanged);
+    };
+  }, []);
+
+  async function handleRemovePersonal(callerId: string) {
+    await removeFromPersonalBlacklist(callerId);
+    // El custom event refresca el state via el effect de arriba; igual filtramos
+    // localmente para feedback inmediato.
+    setPersonalBlacklist((prev) =>
+      prev.filter((e) => e.caller_id_e164 !== callerId),
+    );
+  }
 
   const [, startTransition] = useTransition();
 
@@ -233,7 +288,8 @@ export function ContactsManager({ initial }: Props) {
             </h2>
             <p className="text-sm text-[color:var(--color-text-muted)]">
               {whitelist.length} confiables · {blacklist.length} bloqueados ·{" "}
-              {institutional.length} oficiales
+              {institutional.length} oficiales · {personalBlacklist.length}{" "}
+              bloqueados por ti
             </p>
           </div>
         </div>
@@ -389,6 +445,76 @@ export function ContactsManager({ initial }: Props) {
             </li>
           ))}
         </ContactSection>
+
+        {/* ===================== PERSONAL BLACKLIST ===================== */}
+        {/*
+          Sección 4: bloqueados por el cuidador desde el VerdictPanel. Vive en
+          IndexedDB del navegador (no toca el server, no persiste en DB) y se
+          mantiene en sync con el PersonalBlacklistButton vía custom event.
+        */}
+        <section className="flex flex-col gap-3">
+          <header className="flex items-center gap-2">
+            <span
+              aria-hidden="true"
+              className="text-[color:var(--color-danger)]"
+            >
+              <BanIcon className="w-5 h-5" />
+            </span>
+            <h3 className="text-base font-semibold text-[color:var(--color-text)]">
+              Bloqueados por mí
+            </h3>
+            <span className="text-sm text-[color:var(--color-text-subtle)]">
+              ({personalBlacklist.length})
+            </span>
+          </header>
+
+          <p className="text-sm text-[color:var(--color-text-muted)] leading-relaxed">
+            Números que tú bloqueaste manualmente desde el resultado de un
+            análisis. Se guardan solo en este teléfono — Vigía no los envía a
+            ningún servidor.
+          </p>
+
+          {personalBlacklist.length > 0 ? (
+            <ul className="flex flex-col gap-2">
+              {personalBlacklist.map((entry) => (
+                <li
+                  key={entry.caller_id_e164}
+                  className="flex flex-col gap-2 p-3 rounded border border-[var(--color-border)] bg-[var(--color-danger-bg)]"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                    <div className="flex flex-col">
+                      <span className="font-semibold text-[color:var(--color-text)]">
+                        {formatPhone(entry.caller_id_e164)}
+                      </span>
+                      <span className="text-sm text-[color:var(--color-text-muted)]">
+                        Agregado el {formatDateChile(entry.added_at)}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleRemovePersonal(entry.caller_id_e164)
+                      }
+                      className="btn-ghost self-start"
+                      aria-label={`Quitar ${entry.caller_id_e164} de mis bloqueados`}
+                    >
+                      <span>Quitar de bloqueados</span>
+                    </button>
+                  </div>
+                  <p className="text-sm text-[color:var(--color-text-muted)]">
+                    {entry.reason}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm italic text-[color:var(--color-text-subtle)]">
+              Aún no has bloqueado ningún número manualmente. Cuando analices
+              un audio sospechoso, podrás bloquear el número desde el
+              resultado.
+            </p>
+          )}
+        </section>
       </div>
     </details>
   );
