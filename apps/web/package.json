@@ -9,7 +9,8 @@
     "lint": "eslint",
     "smoke:anthropic": "node --env-file=.env.local --import tsx scripts/smoke-anthropic.ts",
     "voices:list": "node --env-file=.env.local --import tsx scripts/list-elevenlabs-voices.ts",
-    "render:scams": "node --env-file=.env.local --import tsx scripts/render-scams.ts"
+    "render:scams": "node --env-file=.env.local --import tsx scripts/render-scams.ts",
+    "tools:export": "node --import tsx scripts/export-tools.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.94.0",
