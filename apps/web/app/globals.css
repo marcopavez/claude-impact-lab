@@ -9,8 +9,10 @@
  *   - Fuente body: Atkinson Hyperlegible (diseñada para baja visión).
  *   - Fuente display: Fraunces (serif cálida e institucional para H1 y
  *     headline del verdict).
- *   - Texto base 19-22px (clamp) multiplicado por --font-scale (1 / 1.25 / 1.5
- *     según el FontSizeToggle in-app). Llega hasta 33px en máximo.
+ *   - Texto base 19-22px (clamp). El FontSizeToggle in-app aplica
+ *     --font-scale (1 / 1.25 / 1.5) sobre el font-size del <html>, de modo
+ *     que TODAS las unidades rem (botones, badges, headings, utilidades
+ *     Tailwind) escalan proporcionalmente, no solo lo que hereda del body.
  *   - Paleta WCAG AAA: contraste ≥7:1 en texto normal, ≥4.5:1 en large text.
  *   - Focus ring siempre visible (3px outline + offset). NUNCA outline:none.
  *   - prefers-reduced-motion: animaciones cortas a 1ms y sin transform animado.
@@ -56,11 +58,11 @@
   --focus-ring-offset: 3px;
 
   /* Tipografía base — clamp asegura 19-22px sin overflow.
-   * --font-scale lo multiplica el FontSizeToggle (1 | 1.25 | 1.5). */
+   * El FontSizeToggle aplica --font-scale (1 | 1.25 | 1.5) al font-size
+   * del <html> (ver regla `html` más abajo), por lo que cada `rem` de aquí
+   * en adelante ya viene escalado. No multiplicar de nuevo. */
   --font-scale: 1;
-  --font-size-base: calc(
-    clamp(1.1875rem, 1rem + 0.5vw, 1.375rem) * var(--font-scale)
-  );
+  --font-size-base: clamp(1.1875rem, 1rem + 0.5vw, 1.375rem);
   --line-height-base: 1.6;
   --font-sans:
     var(--font-sans-vigia), "Atkinson Hyperlegible", "Segoe UI",
@@ -101,8 +103,11 @@
 }
 
 html {
-  /* Soporte zoom user-agent + clamp en --font-size-base */
-  font-size: 100%;
+  /* Soporte zoom user-agent + clamp en --font-size-base.
+   * Multiplicamos por --font-scale acá (no en body) para que todo `rem`
+   * — botones, badges, utilidades Tailwind text-*, headings — escale junto
+   * al texto del body cuando el usuario usa el FontSizeToggle. */
+  font-size: calc(100% * var(--font-scale, 1));
 }
 
 body {
